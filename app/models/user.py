@@ -1,6 +1,6 @@
 # app/models/user.py
 
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from app.db.database import Base
 from sqlalchemy.orm import relationship
 
@@ -19,4 +19,4 @@ class User(Base):
     stripe_customer_id = Column(String, nullable=True)
     subscription = relationship("UserSubscription", back_populates="user", uselist=False)
     reset_token = Column(String, nullable=True)
-    
+    last_login = Column(DateTime, nullable=True)
