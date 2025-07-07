@@ -1,16 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from passlib.hash import bcrypt
-
+from fastapi import Header
 from app.db.database import get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserInfo
 from app.schemas.user import UserCreate, ShowUser
-
+from app.schemas.auth import ForgotPasswordRequest, ResetPasswordRequest, ForgotPasswordRequest, ResetPasswordRequest
 from app.auth.jwt_handler import create_access_token, create_refresh_token
 from app.utils.firebase_otp import verify_firebase_token, send_firebase_otp
-from app.utils.token import confirm_email_token
+from app.utils.token import confirm_email_token, generate_reset_token, confirm_reset_token
 from app.utils import email as email_utils
+from app.utils.email import send_password_reset_email
+from fastapi.security import OAuth2PasswordBearer
 
 router = APIRouter()
 
@@ -89,3 +91,42 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "user": user
     }
+
+
+@router.post("/forgot-password")
+def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token = generate_reset_token(user.email)
+    user.reset_token = token
+    db.commit()
+
+    send_password_reset_email(user.email, token)
+    return {"message": "Password reset link sent to your email."}
+
+@router.post("/reset-password")
+def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    email = confirm_reset_token(request.token)
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid or expired token.")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user or user.reset_token != request.token:
+        raise HTTPException(status_code=400, detail="Invalid token.")
+
+    user.password = bcrypt.hash(request.new_password)
+    user.reset_token = None
+    db.commit()
+
+    return {"message": "Password reset successful."}
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+@router.post("/logout")
+def logout_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    blacklist_token(token, db)
+    return {"message": "Successfully logged out."}

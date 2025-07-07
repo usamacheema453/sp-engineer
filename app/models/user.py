@@ -2,6 +2,7 @@
 
 from sqlalchemy import Column, Integer, String, Boolean
 from app.db.database import Base
+from sqlalchemy.orm import relationship
 
 class User(Base):
     __tablename__ = 'users'
@@ -15,3 +16,7 @@ class User(Base):
     auth_method = Column(String, nullable=True)  # "email" or "phone"
     phone_number = Column(String, nullable=True)
     nickname = Column(String, nullable=True)
+    stripe_customer_id = Column(String, nullable=True)
+    subscription = relationship("UserSubscription", back_populates="user", uselist=False)
+    reset_token = Column(String, nullable=True)
+    

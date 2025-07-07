@@ -2,6 +2,7 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from app.utils.token import generate_email_token
+from email.mime.multipart import MIMEMultipart
 
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
@@ -21,3 +22,30 @@ def send_verification_email(email: str):
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_FROM, email, msg.as_string())
+
+
+def send_email(to: str, subject: str, body: str):
+    sender = "your_email@gmail.com"
+    password = "your_app_password"  # App password for Gmail
+
+    msg = MIMEMultipart()
+    msg['From'] = sender
+    msg['To'] = to
+    msg['Subject'] = subject
+
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.sendmail(EMAIL_FROM, to, msg.as_string())
+        server.quit()
+        print(f"Email sent to {to}")
+    except Exception as e:
+        print(f"Email failed: {e}")
+
+def send_password_reset_email(email: str, token: str):
+    reset_link = f"http://yourfrontend.com/reset-password?token={token}"
+    # Replace with actual email service
+    print(f"[DEBUG] Send this to {email}:\nReset your password: {reset_link}")

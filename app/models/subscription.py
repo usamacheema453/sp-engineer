@@ -22,6 +22,8 @@ class SubscriptionPlan(Base):
     ninja_mode = Column(Boolean, default=False)
     meme_generator = Column(Boolean, default=False)
 
+ # ✅ Relationship to UserSubscription (Fix)
+    subscriptions = relationship("UserSubscription", back_populates="plan")
     # future: more features as new columns
 
 
@@ -39,6 +41,10 @@ class UserSubscription(Base):
     active = Column(Boolean, default=True)
     auto_renew = Column(Boolean, default=True)
 
-    # relationships (optional for joins)
+     # ✅ Track usage
+    queries_used = Column(Integer, default=0)
+    documents_uploaded = Column(Integer, default=0)
+
+    # Relationships
     user = relationship("User", back_populates="subscription")
-    plan = relationship("SubscriptionPlan")
+    plan = relationship("SubscriptionPlan", back_populates="subscriptions")

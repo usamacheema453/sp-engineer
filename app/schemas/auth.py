@@ -31,3 +31,10 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str
     user: UserInfo
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
