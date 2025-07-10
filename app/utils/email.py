@@ -68,11 +68,30 @@ def store_otp(email: str, otp: str, expiry_minutes: int = 10):
 
 # ✅ 7. Verify OTP from user
 def verify_email_otp(email: str, otp: str) -> bool:
+    print(f"[DEBUG OTP] Verifying OTP for email: {email}")
+    print(f"[DEBUG OTP] Provided OTP: {otp}")
+    print(f"[DEBUG OTP] Current OTP store: {otp_store}")
+    
     stored = otp_store.get(email)
     if not stored:
+        print(f"[DEBUG OTP] No OTP found in store for {email}")
         return False
+    
     stored_otp, expiry = stored
+    print(f"[DEBUG OTP] Stored OTP: {stored_otp}, Expiry: {expiry}")
+    print(f"[DEBUG OTP] Current time: {datetime.utcnow()}")
+    
     if datetime.utcnow() > expiry:
+        print(f"[DEBUG OTP] OTP expired for {email}")
         del otp_store[email]
         return False
-    return otp == stored_otp
+    
+    is_match = otp == stored_otp
+    print(f"[DEBUG OTP] OTP match result: {is_match}")
+    
+    if is_match:
+        # Clean up used OTP
+        del otp_store[email]
+        print(f"[DEBUG OTP] OTP verified and cleaned up for {email}")
+    
+    return is_match
