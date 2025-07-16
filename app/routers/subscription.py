@@ -351,3 +351,147 @@ def check_payment_status(payment_intent_id: str):
     except Exception as e:
         print(f"❌ Payment status check error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Add this to app/routers/subscription.py
+
+@router.post("/activate-free")
+def activate_free_plan(request: dict, db: Session = Depends(get_db)):
+    """Activate free plan directly without payment"""
+    try:
+        email = request.get("email")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        
+        # Get user
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get free plan
+        free_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.name == "Free").first()
+        if not free_plan:
+            raise HTTPException(status_code=404, detail="Free plan not found")
+        
+        # Deactivate existing subscriptions
+        existing_subs = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user.id,
+            UserSubscription.active == True
+        ).all()
+        
+        for sub in existing_subs:
+            sub.active = False
+        
+        # Create free subscription (no expiry for free plan)
+        new_subscription = UserSubscription(
+            user_id=user.id,
+            plan_id=free_plan.id,
+            active=True,
+            billing_cycle=BillingCycle.monthly,
+            start_date=datetime.utcnow(),
+            expiry_date=datetime.utcnow() + timedelta(days=365*10),  # 10 years for free plan
+            auto_renew=False,  # Free plan doesn't need renewal
+            queries_used=0,
+            documents_uploaded=0
+        )
+        
+        db.add(new_subscription)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Free plan activated successfully!",
+            "plan": "free"
+        }
+        
+    except Exception as e:
+        print(f"❌ Free plan activation error: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add this to app/routers/subscription.py
+
+@router.post("/create-checkout-session")
+def create_checkout_session(request: CreatePaymentRequest, db: Session = Depends(get_db)):
+    """Create Stripe Checkout session for one-time payment"""
+    try:
+        # Get user
+        user = db.query(User).filter(User.email == request.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get plan
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == request.plan_id).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        
+        # Calculate amount
+        if request.billing_cycle == "yearly":
+            amount = plan.yearly_price
+        else:
+            amount = plan.monthly_price
+        
+        if not amount:
+            raise HTTPException(status_code=400, detail="Price not configured for this plan")
+        
+        # Create Stripe customer if needed
+        if not user.stripe_customer_id:
+            customer_id = create_customer(request.email)
+            user.stripe_customer_id = customer_id
+            db.commit()
+                    # ✅ React Native specific URLs
+        if __DEV__:
+            # For development - use custom scheme or localhost
+            success_url = "exp://192.168.100.213:8081/--/payment-success?session_id={CHECKOUT_SESSION_ID}"
+            cancel_url = "exp://192.168.100.213:8081/--/pricing"
+        # else:
+        #     # For production - use your app's custom scheme
+        #     success_url = "superengineer://payment-success?session_id={CHECKOUT_SESSION_ID}"
+        #     cancel_url = "superengineer://pricing"
+        
+        # Override with provided URLs if available
+        if request.success_url:
+            success_url = request.success_url
+        if request.cancel_url:
+            cancel_url = request.cancel_url
+            
+        
+        # ✅ Create Checkout Session instead of PaymentIntent
+        import stripe
+        
+        checkout_session = stripe.checkout.Session.create(
+            customer=user.stripe_customer_id,
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {
+                        'name': f'{plan.name} Plan - {request.billing_cycle.title()}',
+                    },
+                    'unit_amount': amount,
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=f"{request.success_url}?session_id={{CHECKOUT_SESSION_ID}}" if hasattr(request, 'success_url') else "https://yourfrontend.com/success",
+            cancel_url=f"{request.cancel_url}" if hasattr(request, 'cancel_url') else "https://yourfrontend.com/pricing",
+            metadata={
+                'user_email': request.email,
+                'plan_id': str(request.plan_id),
+                'plan_name': plan.name,
+                'billing_cycle': request.billing_cycle
+            }
+        )
+        
+        return {
+            "success": True,
+            "checkout_url": checkout_session.url,
+            "session_id": checkout_session.id,
+            "amount": amount,
+            "plan_name": plan.name,
+            "billing_cycle": request.billing_cycle
+        }
+        
+    except Exception as e:
+        print(f"❌ Checkout session creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
