@@ -1,4 +1,4 @@
-# app/models/user.py
+# app/models/user.py - Updated for one-time payments
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from app.db.database import Base
@@ -16,7 +16,18 @@ class User(Base):
     auth_method = Column(String, nullable=True)  # "email" or "phone"
     phone_number = Column(String, nullable=True)
     nickname = Column(String, nullable=True)
+    
+    # Stripe customer info
     stripe_customer_id = Column(String, nullable=True)
+    
+    # ✅ NEW: Default payment method for renewals
+    default_payment_method_id = Column(String, nullable=True)
+    
+    # ✅ NEW: Payment preferences
+    auto_renew_enabled = Column(Boolean, default=True)  # Global auto-renew preference
+    email_notifications = Column(Boolean, default=True)  # Email notifications for renewals
+    
+    # Existing fields
     subscription = relationship("UserSubscription", back_populates="user", uselist=False)
     reset_token = Column(String, nullable=True)
     last_login = Column(DateTime, nullable=True)

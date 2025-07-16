@@ -1,10 +1,10 @@
-# Update your app/utils/stripe_service.py:
+# app/utils/stripe_service.py - Updated for one-time payments
 
 import stripe
 import os
 from app.config import STRIPE_SECRET_KEY
 
-# Initialize Stripe with your secret key
+# Initialize Stripe
 stripe.api_key = STRIPE_SECRET_KEY
 
 def create_customer(email: str) -> str:
@@ -19,53 +19,132 @@ def create_customer(email: str) -> str:
         return customer.id
     except Exception as e:
         print(f"❌ Stripe customer creation failed: {e}")
-        # Return mock ID for development
         return f"cus_mock_{email.replace('@', '_').replace('.', '_')}"
 
-def create_subscription(customer_id: str, price_id: str) -> dict:
-    """Create a new Stripe subscription"""
+def create_payment_intent(
+    customer_id: str, 
+    amount: int, 
+    plan_name: str,
+    billing_cycle: str,
+    user_email: str,
+    plan_id: int
+) -> dict:
+    """Create PaymentIntent for one-time payment"""
     try:
-        if not STRIPE_SECRET_KEY or price_id.startswith('price_mock'):
-            print("⚠️ Stripe not configured - using mock subscription")
+        if not STRIPE_SECRET_KEY:
             return {
-                "subscription_id": f"sub_mock_{customer_id}_{price_id}",
-                "client_secret": f"pi_mock_{customer_id}_secret"
+                "payment_intent_id": f"pi_mock_{customer_id}",
+                "client_secret": f"pi_mock_{customer_id}_secret",
+                "status": "requires_payment_method"
             }
-            
-        subscription = stripe.Subscription.create(
+        
+        payment_intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency='usd',
             customer=customer_id,
-            items=[{"price": price_id}],
-            payment_behavior="default_incomplete",
-            expand=["latest_invoice.payment_intent"]
+            automatic_payment_methods={'enabled': True},
+            setup_future_usage='off_session',  # ✅ Save payment method for renewals
+            metadata={
+                'user_email': user_email,
+                'plan_id': str(plan_id),
+                'plan_name': plan_name,
+                'billing_cycle': billing_cycle,
+                'type': 'subscription_payment'
+            }
         )
         
-        print(f"✅ Stripe subscription created: {subscription.id}")
+        print(f"✅ PaymentIntent created: {payment_intent.id}")
         return {
-            "subscription_id": subscription.id,
-            "client_secret": subscription.latest_invoice.payment_intent.client_secret
+            "payment_intent_id": payment_intent.id,
+            "client_secret": payment_intent.client_secret,
+            "status": payment_intent.status
         }
     except Exception as e:
-        print(f"❌ Stripe subscription creation failed: {e}")
-        # Return mock data for development
+        print(f"❌ PaymentIntent creation failed: {e}")
         return {
-            "subscription_id": f"sub_mock_{customer_id}_{price_id}",
-            "client_secret": f"pi_mock_{customer_id}_secret"
+            "payment_intent_id": f"pi_mock_{customer_id}",
+            "client_secret": f"pi_mock_{customer_id}_secret",
+            "status": "requires_payment_method",
+            "error": str(e)
         }
 
-def verify_webhook_signature(payload: bytes, signature: str, webhook_secret: str) -> bool:
-    """Verify Stripe webhook signature"""
+def get_payment_intent_details(payment_intent_id: str) -> dict:
+    """Get payment intent details from Stripe"""
     try:
-        stripe.Webhook.construct_event(payload, signature, webhook_secret)
-        return True
+        if not STRIPE_SECRET_KEY or payment_intent_id.startswith('pi_mock'):
+            return {
+                "id": payment_intent_id,
+                "status": "succeeded",
+                "amount": 999,
+                "payment_method": "pm_mock_123",
+                "metadata": {}
+            }
+        
+        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        return {
+            "id": payment_intent.id,
+            "status": payment_intent.status,
+            "amount": payment_intent.amount,
+            "payment_method": payment_intent.payment_method,
+            "metadata": payment_intent.metadata
+        }
     except Exception as e:
-        print(f"❌ Webhook verification failed: {e}")
-        return False
+        print(f"❌ Error retrieving payment intent: {e}")
+        return None
 
-def cancel_subscription(subscription_id: str) -> bool:
-    """Cancel a Stripe subscription"""
+def charge_saved_payment_method(customer_id: str, payment_method_id: str, amount: int, metadata: dict = None) -> dict:
+    """Charge saved payment method for renewals"""
     try:
-        stripe.Subscription.delete(subscription_id)
-        return True
+        if not STRIPE_SECRET_KEY:
+            return {
+                "payment_intent_id": f"pi_renewal_mock_{customer_id}",
+                "status": "succeeded",
+                "amount": amount
+            }
+        
+        payment_intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency='usd',
+            customer=customer_id,
+            payment_method=payment_method_id,
+            confirmation_method='automatic',
+            confirm=True,
+            off_session=True,  # ✅ Indicates automated renewal payment
+            metadata=metadata or {}
+        )
+        
+        print(f"✅ Renewal payment successful: {payment_intent.id}")
+        return {
+            "payment_intent_id": payment_intent.id,
+            "status": payment_intent.status,
+            "amount": payment_intent.amount
+        }
+    except stripe.error.CardError as e:
+        print(f"❌ Card declined for renewal: {e.user_message}")
+        return {
+            "error": "card_declined",
+            "message": e.user_message,
+            "status": "failed"
+        }
     except Exception as e:
-        print(f"❌ Error canceling subscription: {e}")
-        return False
+        print(f"❌ Renewal payment failed: {e}")
+        return {
+            "error": "payment_failed",
+            "message": str(e),
+            "status": "failed"
+        }
+
+def get_customer_payment_methods(customer_id: str) -> list:
+    """Get saved payment methods for customer"""
+    try:
+        if not STRIPE_SECRET_KEY:
+            return []
+        
+        payment_methods = stripe.PaymentMethod.list(
+            customer=customer_id,
+            type="card"
+        )
+        return payment_methods.data
+    except Exception as e:
+        print(f"❌ Error fetching payment methods: {e}")
+        return []
