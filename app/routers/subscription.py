@@ -1,5 +1,5 @@
 # app/routers/subscription.py - Updated for one-time payments
-
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -25,6 +25,9 @@ class CreatePaymentRequest(BaseModel):
     email: EmailStr
     plan_id: int
     billing_cycle: str  # "monthly" or "yearly"
+    success_url: Optional[str] = None
+    cancel_url:  Optional[str] = None
+
 
 class ConfirmPaymentRequest(BaseModel):
     email: EmailStr
@@ -440,7 +443,7 @@ def create_checkout_session(request: CreatePaymentRequest, db: Session = Depends
             user.stripe_customer_id = customer_id
             db.commit()
                     # ✅ React Native specific URLs
-        if __DEV__:
+        # if __DEV__:
             # For development - use custom scheme or localhost
             success_url = "exp://192.168.100.213:8081/--/payment-success?session_id={CHECKOUT_SESSION_ID}"
             cancel_url = "exp://192.168.100.213:8081/--/pricing"
@@ -473,8 +476,8 @@ def create_checkout_session(request: CreatePaymentRequest, db: Session = Depends
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=f"{request.success_url}?session_id={{CHECKOUT_SESSION_ID}}" if hasattr(request, 'success_url') else "https://yourfrontend.com/success",
-            cancel_url=f"{request.cancel_url}" if hasattr(request, 'cancel_url') else "https://yourfrontend.com/pricing",
+            success_url=success_url,
+            cancel_url=cancel_url,
             metadata={
                 'user_email': request.email,
                 'plan_id': str(request.plan_id),
