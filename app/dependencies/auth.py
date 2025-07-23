@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.utils.token import decode_token, is_token_blacklisted
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.models.user import User  # ✅ ADD THIS LINE
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -10,7 +11,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if is_token_blacklisted(token, db):
         raise HTTPException(status_code=401, detail="Token is blacklisted. Please login again.")
 
-    payload = decode_token(token)  # your existing decode method
+    payload = decode_token(token)
     user_id = payload.get("sub")
     
     if not user_id:

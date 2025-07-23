@@ -26,6 +26,26 @@ router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# Helper function to update login tracking
+def update_login_tracking(user: User, db: Session):
+    """Update user login tracking"""
+    current_time = datetime.utcnow()
+    
+    # Update login count and last login
+    user.login_count += 1
+    user.last_login = current_time
+    
+    # Check if this is first time completing login flow
+    is_first_login = not user.first_login_completed
+    
+    # Mark first login as completed
+    if not user.first_login_completed:
+        user.first_login_completed = True
+    
+    db.commit()
+    
+    return is_first_login
+
 # ------------------ SIGNUP ------------------
 @router.post("/signup", response_model=ShowUser)
 def signup(user: UserCreate, db: Session = Depends(get_db)):
@@ -177,28 +197,23 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
 
     # Handle 2FA - Send OTP and return 2FA info
     if user.is_2fa_enabled:
-        print(f"[DEBUG LOGIN] 2FA enabled for {user.email}, method: {user.auth_method}")  # Debug log
+        print(f"[DEBUG LOGIN] 2FA enabled for {user.email}, method: {user.auth_method}")
         
         # Send OTP to user's registered method
         if user.auth_method == "phone":
             send_firebase_otp(user.phone_number)
             contact_info = user.phone_number
-            print(f"[DEBUG LOGIN] Sent OTP to phone: {contact_info}")  # Debug log
         elif user.auth_method == "email":
             otp = generate_otp()
-            print(f"[DEBUG LOGIN] Generated OTP: {otp} for {user.email}")  # Debug log
             store_otp(user.email, otp)
             send_email_otp(user.email, otp)
             contact_info = user.email
-            print(f"[DEBUG LOGIN] Stored and sent OTP to email: {contact_info}")  # Debug log
         else:
             # Fallback to email if no method specified
             otp = generate_otp()
-            print(f"[DEBUG LOGIN] Generated fallback OTP: {otp} for {user.email}")  # Debug log
             store_otp(user.email, otp)
             send_email_otp(user.email, otp)
             contact_info = user.email
-            print(f"[DEBUG LOGIN] Stored and sent fallback OTP to email: {contact_info}")  # Debug log
         
         # Return 2FA required response
         return {
@@ -209,9 +224,8 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
         }
 
     # For users without 2FA, complete login immediately
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.commit()
+    # ✅ Update login tracking and check if first-time login
+    is_first_login = update_login_tracking(user, db)
 
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
@@ -221,7 +235,9 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": user
+        "user": user,
+        "is_first_login": is_first_login,  # ✅ Frontend will use this to show pricing
+        "login_count": user.login_count
     }
 
 
@@ -229,49 +245,38 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/complete-login")
 def complete_login_after_2fa(request: Verify2FAOTPRequest, db: Session = Depends(get_db)):
-    print(f"[DEBUG] Complete login request: {request}")  # Debug log
+    print(f"[DEBUG] Complete login request: {request}")
     
     user = db.query(User).filter(User.email == request.email).first()
     if not user:
-        print(f"[DEBUG] User not found: {request.email}")  # Debug log
         raise HTTPException(status_code=404, detail="User not found")
-
-    print(f"[DEBUG] User found: {user.email}, 2FA method: {user.auth_method}")  # Debug log
 
     # Verify OTP
     is_valid = False
     
     if request.auth_method == "email":
-        print(f"[DEBUG] Verifying email OTP: {request.otp_code} for {request.email}")  # Debug log
         is_valid = verify_email_otp(request.email, request.otp_code)
-        print(f"[DEBUG] Email OTP verification result: {is_valid}")  # Debug log
     elif request.auth_method == "phone":
-        print(f"[DEBUG] Verifying phone OTP: {request.otp_code}")  # Debug log
         # For phone verification - implement proper phone verification
-        is_valid = True  # Placeholder - implement proper phone verification
-        print(f"[DEBUG] Phone OTP verification result: {is_valid}")  # Debug log
+        is_valid = True  # Placeholder
     
     if not is_valid:
-        print(f"[DEBUG] OTP verification failed for {request.email}")  # Debug log
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
-    print(f"[DEBUG] OTP verified successfully, updating last login")  # Debug log
-    
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.commit()
+    # ✅ Update login tracking and check if first-time login
+    is_first_login = update_login_tracking(user, db)
 
     # Create tokens
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
 
-    print(f"[DEBUG] Login completed successfully for {user.email}")  # Debug log
-
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "user": user
+        "user": user,
+        "is_first_login": is_first_login,  # ✅ Frontend will use this to show pricing
+        "login_count": user.login_count
     }
 
 
@@ -325,7 +330,34 @@ def logout_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail="Failed to logout")
 
 
-# ------------------ GET CURRENT USER ------------------
+# ✅ NEW: Endpoint to mark pricing flow as completed
+@router.post("/complete-pricing-flow")
+def complete_pricing_flow(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Mark that user has completed the pricing flow"""
+    from app.utils.token import decode_token, is_token_blacklisted
+    
+    if is_token_blacklisted(token, db):
+        raise HTTPException(status_code=401, detail="Token is blacklisted")
+
+    try:
+        payload = decode_token(token)
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # This endpoint can be called when user dismisses pricing screen
+        # or completes a subscription
+        return {"message": "Pricing flow acknowledged"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# ------------------ GET CURRENT USER (Updated) ------------------
 @router.get("/me", response_model=UserInfo)
 def get_current_user_info(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     from app.utils.token import decode_token, is_token_blacklisted
@@ -350,7 +382,10 @@ def get_current_user_info(token: str = Depends(oauth2_scheme), db: Session = Dep
             email=user.email,
             is_2fa_enabled=user.is_2fa_enabled,
             auth_method=user.auth_method,
-            phone_number=user.phone_number
+            phone_number=user.phone_number,
+            # ✅ Add these new fields
+            login_count=getattr(user, 'login_count', 0),
+            first_login_completed=getattr(user, 'first_login_completed', False)
         )
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")

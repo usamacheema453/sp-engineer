@@ -212,8 +212,8 @@ def get_subscription_plans(db: Session = Depends(get_db)):
 
 # ✅ 4. GET CURRENT SUBSCRIPTION
 @router.get("/current/{email}")
-def get_current_subscription(email: str, db: Session = Depends(get_db)):
-    """Get user's current subscription status"""
+def get_current_subscription_fixed(email: str, db: Session = Depends(get_db)):
+    """Updated: No default free plan display"""
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -240,12 +240,14 @@ def get_current_subscription(email: str, db: Session = Depends(get_db)):
             "renewal_failed": subscription.renewal_failed
         }
     else:
-        return {
+        # ✅ FIXED: No default plan - user must choose
+       return {
             "has_subscription": False,
-            "plan": "free",
-            "plan_display": "Free",
-            "queries_remaining": 10,  # Free plan limit
-            "documents_remaining": 0
+            "plan": None,  # ✅ Changed from "free" to None
+            "plan_display": None,
+            "message": "No subscription plan selected",
+            "requires_plan_selection": True,  # ✅ Clear indicator for frontend
+            "available_plans_endpoint": "/subscriptions/plans"
         }
 
 # ✅ 5. UPDATE AUTO-RENEWAL PREFERENCE

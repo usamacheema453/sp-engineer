@@ -148,3 +148,33 @@ def get_customer_payment_methods(customer_id: str) -> list:
     except Exception as e:
         print(f"❌ Error fetching payment methods: {e}")
         return []
+
+def safe_stripe_call(func, *args, **kwargs):
+    """Wrapper for safe Stripe API calls"""
+    try:
+        if not STRIPE_SECRET_KEY:
+            logger.warning("Stripe not configured - returning mock response")
+            return {"error": "stripe_not_configured"}
+        
+        return func(*args, **kwargs)
+    except stripe.error.CardError as e:
+        logger.error(f"Card error: {e.user_message}")
+        return {"error": "card_error", "message": e.user_message}
+    except stripe.error.RateLimitError as e:
+        logger.error(f"Rate limit error: {e}")
+        return {"error": "rate_limit", "message": "Too many requests"}
+    except stripe.error.InvalidRequestError as e:
+        logger.error(f"Invalid request: {e}")
+        return {"error": "invalid_request", "message": str(e)}
+    except stripe.error.AuthenticationError as e:
+        logger.error(f"Authentication error: {e}")
+        return {"error": "authentication", "message": "Invalid API key"}
+    except stripe.error.APIConnectionError as e:
+        logger.error(f"Network error: {e}")
+        return {"error": "network", "message": "Network error"}
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error: {e}")
+        return {"error": "stripe_error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return {"error": "unexpected", "message": str(e)}

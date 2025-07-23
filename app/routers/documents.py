@@ -4,7 +4,7 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.user import User
-from app.utils.auth import get_current_user
+from app.dependencies.auth import get_current_user
 from app.dependencies.subscription_check import check_subscription_usage
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
