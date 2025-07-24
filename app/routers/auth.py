@@ -12,7 +12,7 @@ from app.schemas.auth import ForgotPasswordRequest, ResetPasswordRequest
 
 from app.auth.jwt_handler import create_access_token, create_refresh_token
 from app.utils.firebase_otp import verify_firebase_token, send_firebase_otp
-from app.utils.token import confirm_email_token, generate_reset_token, confirm_reset_token
+from app.utils.token import confirm_email_token, generate_reset_token, confirm_reset_token, blacklist_token
 from app.utils.email import (
     send_verification_email,
     send_password_reset_email,

@@ -6,7 +6,7 @@ from app.dependencies.subscription_check import check_subscription_usage
 from app.models.user import User
 from app.db.database import get_db
 from app.utils.auth import get_current_user
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user 
 
 router = APIRouter(prefix="/search", tags=["Search"])
 

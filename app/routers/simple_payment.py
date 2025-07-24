@@ -218,5 +218,6 @@ def get_simple_subscription_status(email: str, db: Session = Depends(get_db)):
     else:
         return {
             "has_subscription": False,
-            "plan": "free"
+            "plan": None,  # ✅ Changed from "free" to None
+            "requires_plan_selection": True
         }

@@ -32,5 +32,5 @@ def upload_document(
     return {
         "message": f"File '{file.filename}' uploaded successfully.",
         "documents_uploaded": subscription.documents_uploaded,
-        "documents_remaining": subscription.plan.max_documents - subscription.documents_uploaded
+        "documents_remaining": subscription.plan.document_upload_limit - subscription.documents_uploaded
     }

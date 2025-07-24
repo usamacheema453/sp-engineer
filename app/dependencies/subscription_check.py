@@ -1,9 +1,14 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, APIRouter
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.db.database import get_db
 from app.models.subscription import UserSubscription
 from app.models.user import User
+
+
+# Add router for the endpoint
+router = APIRouter()
+
 
 def check_subscription_usage(
     user: User,
@@ -53,7 +58,7 @@ def check_subscription_usage(
 
 # ✅ OPTIONAL: Add endpoint to check if user needs to select plan
 
-@router.get("/needs-plan-selection/{email}")
+@router.get("/needs-plan-selection/{email}")  # ✅ This endpoint needs router
 def needs_plan_selection(email: str, db: Session = Depends(get_db)):
     """Check if user needs to select a subscription plan"""
     user = db.query(User).filter(User.email == email).first()

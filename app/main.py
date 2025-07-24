@@ -1,48 +1,90 @@
+# app/main.py - Fixed router registration
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, subscription, webhook  # subscription router is updated
-from app.db.database import Base, engine
-from app.seed.subscription_seed import seed_subscription_plans  # Updated seed function
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Create FastAPI app
+app = FastAPI(title="SuperEngineer API", version="1.0.0")
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="SuperEngineer API",
-    description="Backend API for SuperEngineer mobile app with One-time Payments",
-    version="2.0.0"  # Updated version
-)
-
-# CORS middleware for React Native
+# ✅ CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development - restrict in production
+    allow_origins=[
+        "http://localhost:8081",
+        "http://localhost:3000", 
+        "http://127.0.0.1:8081",
+        "https://yourapp.com",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Seed subscription plans on startup
-@app.on_event("startup")
-async def startup_event():
-    seed_subscription_plans()  # This will now use the updated seed function
+# ✅ Import and register routers
+try:
+    from app.routers.subscription import router as subscription_router
+    
+    # Register subscription router
+    app.include_router(subscription_router)
+    print("✅ Subscription router registered successfully")
+    
+except ImportError as e:
+    print(f"❌ Failed to import subscription router: {e}")
+    
+    # ✅ Fallback: Create basic endpoints directly in main.py
+    @app.get("/subscriptions/test")
+    def fallback_test():
+        return {"status": "fallback", "message": "Direct endpoint working"}
 
-# Include routers - No changes needed!
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(subscription.router, tags=["Subscriptions"])  # Updated router
-app.include_router(webhook.router, tags=["Webhooks"])  # Optional for simple method
+try:
+    from app.routers.auth import router as auth_router
+    app.include_router(auth_router, prefix="/auth")
+    print("✅ Auth router registered successfully")
+except ImportError as e:
+    print(f"⚠️ Auth router not found: {e}")
 
-# Health check endpoint
+# Health check endpoints
 @app.get("/")
-def read_root():
-    return {"message": "SuperEngineer API with One-time Payments", "status": "healthy"}
+async def root():
+    return {
+        "message": "SuperEngineer API is running", 
+        "status": "healthy",
+        "cors_enabled": True
+    }
 
 @app.get("/health")
-def health_check():
-    return {"status": "healthy", "service": "SuperEngineer API v2.0"}
+async def health_check():
+    return {
+        "status": "ok",
+        "message": "API is working",
+        "cors_enabled": True,
+        "timestamp": "2025-01-28",
+        "registered_routes": len(app.routes)
+    }
+
+# ✅ Debug: List all registered routes
+@app.get("/debug/routes")
+async def debug_routes():
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            routes.append({
+                "path": route.path,
+                "methods": list(route.methods),
+                "name": getattr(route, 'name', 'unnamed')
+            })
+    return {"routes": routes}
+
+# CORS preflight handler
+@app.options("/{path:path}")
+async def options_handler():
+    return {"message": "CORS preflight successful"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
