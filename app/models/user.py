@@ -37,3 +37,4 @@ class User(Base):
     subscription = relationship("UserSubscription", back_populates="user", uselist=False)
     reset_token = Column(String, nullable=True)
     last_login = Column(DateTime, nullable=True)
+    settings = relationship("UserSettings", back_populates="user", uselist=False)

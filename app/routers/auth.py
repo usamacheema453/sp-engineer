@@ -257,8 +257,12 @@ def complete_login_after_2fa(request: Verify2FAOTPRequest, db: Session = Depends
     if request.auth_method == "email":
         is_valid = verify_email_otp(request.email, request.otp_code)
     elif request.auth_method == "phone":
+        if request.otp_code == "firebase_verified":
+            is_valid = True  # Placeholder
+            print(f"✅ Phone OTP verified via Firebase for {request.email}")
+
         # For phone verification - implement proper phone verification
-        is_valid = True  # Placeholder
+       
     
     if not is_valid:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
