@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -12,7 +11,7 @@ from passlib.hash import bcrypt
 
 router = APIRouter(prefix="/user-settings", tags=["User Settings"])
 
-# ✅ SCHEMAS (inline for now)
+# ✅ UPDATED SCHEMAS
 from pydantic import BaseModel
 
 class NotificationSettingsRequest(BaseModel):
@@ -27,6 +26,7 @@ class PersonalizationSettingsRequest(BaseModel):
     expertise_level: Optional[str] = None
     communication_tone: Optional[str] = None
     response_instructions: Optional[str] = None
+    nickname: Optional[str] = None  # ✅ NEW: Added nickname
 
 class Toggle2FARequest(BaseModel):
     is_2fa_enabled: bool
@@ -35,7 +35,18 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
+# ✅ NEW: General settings update request
+class GeneralSettingsRequest(BaseModel):
+    phone_number: Optional[str] = None
+
+# ✅ UPDATED: Main response with user data
 class AllUserSettingsResponse(BaseModel):
+    # ✅ NEW: User basic info
+    full_name: str
+    email: str
+    phone_number: Optional[str]
+    nickname: Optional[str]
+    
     # Notifications
     email_notifications: bool
     push_notifications: bool
@@ -83,20 +94,145 @@ def get_or_create_user_settings(db: Session, user_id: int) -> UserSettings:
 
 # ✅ MAIN ENDPOINTS
 
+# ✅ IMPORTANT: Specific routes MUST come before generic "/" route to avoid conflicts
+
+# ✅ NEW: General settings endpoints (MOVED UP)
+@router.get("/general")
+def get_general_settings(
+    current_user: User = Depends(get_current_user)
+):
+    """Get general user settings (phone, name, email)"""
+    try:
+        return {
+            "full_name": current_user.full_name,
+            "email": current_user.email,
+            "phone_number": current_user.phone_number,
+            "nickname": current_user.nickname,
+            "message": "General settings retrieved successfully!"
+        }
+    except Exception as e:
+        print(f"❌ Error getting general settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get general settings: {str(e)}"
+        )
+
+@router.put("/general")
+def update_general_settings(
+    data: GeneralSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update general settings (phone number)"""
+    try:
+        print(f"Updating general settings for user {current_user.id}: {data}")
+        
+        # Update phone number if provided
+        if data.phone_number is not None:
+            current_user.phone_number = data.phone_number
+        
+        db.commit()
+        db.refresh(current_user)
+        
+        print(f"✅ General settings updated for user {current_user.id}")
+        
+        return {
+            "full_name": current_user.full_name,
+            "email": current_user.email,
+            "phone_number": current_user.phone_number,
+            "nickname": current_user.nickname,
+            "message": "General settings updated successfully!"
+        }
+    except Exception as e:
+        print(f"❌ Error updating general settings: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update general settings: {str(e)}"
+        )
+
+@router.get("/notifications")
+def get_notification_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get notification settings"""
+    try:
+        settings = get_or_create_user_settings(db, current_user.id)
+        return {
+            "email_notifications": settings.email_notifications,
+            "push_notifications": settings.push_notifications,
+            "marketing_communications": settings.marketing_communications
+        }
+    except Exception as e:
+        print(f"❌ Error getting notification settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get notification settings: {str(e)}"
+        )
+
+@router.get("/personalization")
+def get_personalization_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get personalization settings"""
+    try:
+        settings = get_or_create_user_settings(db, current_user.id)
+        return {
+            "profile_avatar": settings.profile_avatar,
+            "profession": settings.profession,
+            "industry": settings.industry,
+            "expertise_level": settings.expertise_level,
+            "communication_tone": settings.communication_tone,
+            "response_instructions": settings.response_instructions,
+            "nickname": current_user.nickname  # ✅ NEW: Added nickname from User table
+        }
+    except Exception as e:
+        print(f"❌ Error getting personalization settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get personalization settings: {str(e)}"
+        )
+
+@router.get("/security")
+def get_security_settings(
+    current_user: User = Depends(get_current_user)
+):
+    """Get security settings"""
+    try:
+        return {
+            "is_2fa_enabled": current_user.is_2fa_enabled,
+            "message": "Security settings retrieved successfully!"
+        }
+    except Exception as e:
+        print(f"❌ Error getting security settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get security settings: {str(e)}"
+        )
+
+# ✅ Main endpoint - MUST be at the end to avoid route conflicts
 @router.get("/", response_model=AllUserSettingsResponse)
 def get_all_user_settings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all user settings"""
+    """Get all user settings including user basic info"""
     try:
         print(f"Getting settings for user {current_user.id}")
         
         # Get or create settings
         settings = get_or_create_user_settings(db, current_user.id)
         
-        # Build response
+        # ✅ UPDATED: Build response with user data
         response_data = {
+            # ✅ NEW: User basic information
+            "full_name": current_user.full_name,
+            "email": current_user.email,
+            "phone_number": current_user.phone_number,
+            "nickname": current_user.nickname,
+            
             # Notification settings
             "email_notifications": settings.email_notifications,
             "push_notifications": settings.push_notifications,
@@ -200,7 +336,8 @@ def get_personalization_settings(
             "industry": settings.industry,
             "expertise_level": settings.expertise_level,
             "communication_tone": settings.communication_tone,
-            "response_instructions": settings.response_instructions
+            "response_instructions": settings.response_instructions,
+            "nickname": current_user.nickname  # ✅ NEW: Added nickname from User table
         }
     except Exception as e:
         print(f"❌ Error getting personalization settings: {str(e)}")
@@ -215,13 +352,13 @@ def update_personalization_settings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update personalization settings"""
+    """Update personalization settings including nickname"""
     try:
         print(f"Updating personalization settings for user {current_user.id}: {data}")
         
         settings = get_or_create_user_settings(db, current_user.id)
         
-        # Update only provided fields
+        # Update UserSettings table fields
         if data.profile_avatar is not None:
             settings.profile_avatar = data.profile_avatar
         if data.profession is not None:
@@ -237,8 +374,13 @@ def update_personalization_settings(
         
         settings.updated_at = datetime.utcnow()
         
+        # ✅ NEW: Update nickname in User table
+        if data.nickname is not None:
+            current_user.nickname = data.nickname
+        
         db.commit()
         db.refresh(settings)
+        db.refresh(current_user)
         
         print(f"✅ Personalization settings updated for user {current_user.id}")
         
@@ -249,6 +391,7 @@ def update_personalization_settings(
             "expertise_level": settings.expertise_level,
             "communication_tone": settings.communication_tone,
             "response_instructions": settings.response_instructions,
+            "nickname": current_user.nickname,  # ✅ NEW: Return updated nickname
             "message": "Personalization settings updated successfully!"
         }
         
@@ -260,7 +403,101 @@ def update_personalization_settings(
             detail=f"Failed to update personalization settings: {str(e)}"
         )
 
-@router.get("/security")
+# ✅ UPDATE endpoints for specific sections
+@router.put("/notifications")
+def update_notification_settings(
+    data: NotificationSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update notification settings"""
+    try:
+        print(f"Updating notification settings for user {current_user.id}: {data}")
+        
+        settings = get_or_create_user_settings(db, current_user.id)
+        
+        # Update notification settings
+        settings.email_notifications = data.email_notifications
+        settings.push_notifications = data.push_notifications
+        settings.marketing_communications = data.marketing_communications
+        settings.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(settings)
+        
+        print(f"✅ Notification settings updated for user {current_user.id}")
+        
+        return {
+            "email_notifications": settings.email_notifications,
+            "push_notifications": settings.push_notifications,
+            "marketing_communications": settings.marketing_communications,
+            "message": "Notification settings updated successfully!"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error updating notification settings: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update notification settings: {str(e)}"
+        )
+
+@router.put("/personalization")
+def update_personalization_settings(
+    data: PersonalizationSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update personalization settings including nickname"""
+    try:
+        print(f"Updating personalization settings for user {current_user.id}: {data}")
+        
+        settings = get_or_create_user_settings(db, current_user.id)
+        
+        # Update UserSettings table fields
+        if data.profile_avatar is not None:
+            settings.profile_avatar = data.profile_avatar
+        if data.profession is not None:
+            settings.profession = data.profession
+        if data.industry is not None:
+            settings.industry = data.industry
+        if data.expertise_level is not None:
+            settings.expertise_level = data.expertise_level
+        if data.communication_tone is not None:
+            settings.communication_tone = data.communication_tone
+        if data.response_instructions is not None:
+            settings.response_instructions = data.response_instructions
+        
+        settings.updated_at = datetime.utcnow()
+        
+        # ✅ NEW: Update nickname in User table
+        if data.nickname is not None:
+            current_user.nickname = data.nickname
+        
+        db.commit()
+        db.refresh(settings)
+        db.refresh(current_user)
+        
+        print(f"✅ Personalization settings updated for user {current_user.id}")
+        
+        return {
+            "profile_avatar": settings.profile_avatar,
+            "profession": settings.profession,
+            "industry": settings.industry,
+            "expertise_level": settings.expertise_level,
+            "communication_tone": settings.communication_tone,
+            "response_instructions": settings.response_instructions,
+            "nickname": current_user.nickname,  # ✅ NEW: Return updated nickname
+            "message": "Personalization settings updated successfully!"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error updating personalization settings: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update personalization settings: {str(e)}"
+        )
 def get_security_settings(
     current_user: User = Depends(get_current_user)
 ):
@@ -342,7 +579,7 @@ def change_password(
             detail=f"Failed to change password: {str(e)}"
         )
 
-# ✅ 6. DEBUG ENDPOINTS (Remove in production)
+# ✅ DEBUG ENDPOINTS (Remove in production)
 @router.get("/debug/test")
 def test_endpoint():
     """Test endpoint to verify API is working"""
@@ -359,51 +596,8 @@ def test_auth_endpoint(current_user: User = Depends(get_current_user)):
         "status": "authenticated",
         "user_id": current_user.id,
         "user_email": current_user.email,
+        "user_full_name": current_user.full_name,  # ✅ NEW: Added for debugging
+        "user_phone": current_user.phone_number,   # ✅ NEW: Added for debugging
+        "user_nickname": current_user.nickname,    # ✅ NEW: Added for debugging
         "message": "Authentication working!"
     }
-
-# ✅ 7. QUICK DEBUG SCRIPT - debug_user_settings.py
-
-def debug_user_settings():
-    """Run this to debug the issue"""
-    
-    print("🔍 Debugging User Settings API...")
-    
-    # Check 1: Models imported correctly
-    try:
-        from app.models.user import User
-        from app.models.user_settings import UserSettings
-        print("✅ Models imported successfully")
-    except Exception as e:
-        print(f"❌ Model import error: {e}")
-    
-    # Check 2: Router imported correctly
-    try:
-        from app.routers.user_settings import router
-        print("✅ Router imported successfully")
-    except Exception as e:
-        print(f"❌ Router import error: {e}")
-    
-    # Check 3: Database connection
-    try:
-        from app.db.database import SessionLocal
-        db = SessionLocal()
-        result = db.execute("SELECT 1").scalar()
-        print("✅ Database connection working")
-        db.close()
-    except Exception as e:
-        print(f"❌ Database connection error: {e}")
-    
-    # Check 4: Table exists
-    try:
-        from app.db.database import SessionLocal
-        db = SessionLocal()
-        result = db.execute("SELECT COUNT(*) FROM user_settings").scalar()
-        print(f"✅ user_settings table exists with {result} rows")
-        db.close()
-    except Exception as e:
-        print(f"❌ Table error: {e}")
-        print("💡 Run: python app/scripts/create_user_settings.py")
-
-if __name__ == "__main__":
-    debug_user_settings()
