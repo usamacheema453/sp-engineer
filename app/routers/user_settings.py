@@ -520,19 +520,22 @@ def toggle_2fa(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Toggle 2FA on/off"""
+    """Toggle 2FA on/off - FIXED VERSION"""
     try:
-        print(f"Toggling 2FA for user {current_user.id}: {data.is_2fa_enabled}")
+        print(f"🔐 Toggling 2FA for user {current_user.id}: {data.is_2fa_enabled}")
         
+        # ✅ UPDATE THE USER'S 2FA STATUS
         current_user.is_2fa_enabled = data.is_2fa_enabled
         db.commit()
+        db.refresh(current_user)
         
         status_text = "enabled" if data.is_2fa_enabled else "disabled"
         print(f"✅ 2FA {status_text} for user {current_user.id}")
         
         return {
             "is_2fa_enabled": current_user.is_2fa_enabled,
-            "message": f"2FA successfully {status_text}!"
+            "message": f"2FA successfully {status_text}!",
+            "success": True
         }
     except Exception as e:
         print(f"❌ Error toggling 2FA: {str(e)}")
@@ -541,6 +544,7 @@ def toggle_2fa(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update 2FA settings: {str(e)}"
         )
+
 
 @router.post("/security/change-password")
 def change_password(

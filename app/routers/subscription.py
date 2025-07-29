@@ -69,32 +69,63 @@ def get_billing_cycle_value(billing_cycle):
     except:
         return "monthly"
 
-# ✅ 1. CURRENT SUBSCRIPTION ENDPOINT (FIXED)
+# ✅ ENHANCED CURRENT SUBSCRIPTION ENDPOINT with better email handling
 @router.get("/current/{email}")
-def get_current_subscription(
+def get_current_subscription_enhanced(
     email: str = Path(..., description="User email address"),
     db: Session = Depends(get_db)
 ):
-    """Get current subscription status for user"""
+    """Get current subscription status for user - ENHANCED"""
     try:
         # Decode email properly
         decoded_email = decode_email(email)
         logger.info(f"📋 Getting subscription for: {decoded_email}")
         
-        # Check if user exists
+        # ✅ ENHANCED: Try multiple email search strategies
+        user = None
+        
+        # Strategy 1: Exact match with decoded email
         user = db.query(User).filter(User.email == decoded_email).first()
+        if user:
+            logger.info(f"👤 Found user with decoded email: {user.id}")
+        
+        # Strategy 2: Exact match with original email
+        if not user:
+            user = db.query(User).filter(User.email == email).first()
+            if user:
+                logger.info(f"👤 Found user with original email: {user.id}")
+        
+        # Strategy 3: Partial match (for debugging)
+        if not user:
+            partial_users = db.query(User).filter(User.email.contains('@gmail.com')).all()
+            for potential_user in partial_users:
+                if 'osamacheema41' in potential_user.email:
+                    logger.info(f"🔍 Found potential user: {potential_user.email}")
+        
         if not user:
             logger.info(f"📋 User not found: {decoded_email}")
+            
+            # ✅ RETURN DEBUG INFO for email mismatch
+            all_users = db.query(User).limit(10).all()
+            user_emails = [u.email for u in all_users]
+            
             return {
                 "has_subscription": False,
                 "plan": "none",
                 "requires_plan_selection": True,
-                "message": "Please select a plan to continue"
+                "message": "User not found",
+                "debug_info": {
+                    "requested_email": email,
+                    "decoded_email": decoded_email,
+                    "user_found": False,
+                    "similar_emails": [e for e in user_emails if 'osamacheema41' in e],
+                    "total_users": len(user_emails)
+                }
             }
         
         logger.info(f"👤 Found user: {user.id}")
         
-        # ✅ FIXED: Get active subscription with better query
+        # Get active subscription
         subscription = db.query(UserSubscription).filter(
             UserSubscription.user_id == user.id,
             UserSubscription.active == True
@@ -103,13 +134,12 @@ def get_current_subscription(
         logger.info(f"🔍 Subscription query result: {subscription}")
         
         if not subscription:
-            # ✅ Check if user has ANY subscription (active or inactive)
+            # Check if user has ANY subscription (active or inactive)
             any_subscription = db.query(UserSubscription).filter(
                 UserSubscription.user_id == user.id
             ).first()
             
             logger.info(f"📋 Any subscription found: {any_subscription}")
-            logger.info(f"📋 No active subscription found for: {decoded_email}")
             
             return {
                 "has_subscription": False,
@@ -119,6 +149,8 @@ def get_current_subscription(
                 "debug_info": {
                     "user_found": True,
                     "user_id": user.id,
+                    "user_email": user.email,  # ✅ SHOW ACTUAL USER EMAIL
+                    "requested_email": email,
                     "any_subscription_exists": any_subscription is not None
                 }
             }
@@ -151,13 +183,16 @@ def get_current_subscription(
             "debug_info": {
                 "subscription_id": subscription.id,
                 "plan_id": subscription.plan_id,
-                "user_id": user.id
+                "user_id": user.id,
+                "user_email": user.email,  # ✅ SHOW ACTUAL USER EMAIL
+                "requested_email": email
             }
         }
         
     except Exception as e:
         logger.error(f"❌ Error getting subscription for {email}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get subscription: {str(e)}")
+
 
 # ✅ 2. CREATE CHECKOUT SESSION (FIXED)
 @router.post("/create-checkout-session")
@@ -319,52 +354,18 @@ def activate_free_plan(request: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to activate free plan: {str(e)}")
 
 
-# ✅ 4. PAYMENT STATUS ENDPOINT (FIXED)
+# app/routers/subscription.py - REMOVE ALL MOCK DATA
+
 @router.get("/payment-status/{session_id}")
 def get_payment_status(session_id: str, db: Session = Depends(get_db)):
-    """Check payment status for a Stripe checkout session"""
+    """Check payment status for a Stripe checkout session - REAL DATA ONLY"""
     try:
         logger.info(f"🔍 Checking payment status for session: {session_id}")
         
-        # ✅ Handle test session IDs for development (FIXED)
-        if session_id.startswith("cs_test_") and len(session_id) > 50:
-            logger.info("📝 Test session ID detected - returning mock success")
-            
-            # ✅ CREATE PROPER MOCK CHECKOUT SESSION OBJECT
-            class MockCheckoutSession:
-                def __init__(self):
-                    self.id = session_id
-                    self.payment_status = "paid"
-                    self.metadata = {
-                        "plan_id": "2",
-                        "billing_cycle": "monthly", 
-                        "user_email": "osamacheema41+user1@gmail.com"  # ✅ ACTUAL USER EMAIL
-                    }
-                    self.customer_details = type('obj', (object,), {'email': 'osamacheema41+user1@gmail.com'})()
-                    self.payment_intent = type('obj', (object,), {'id': f'pi_test_{session_id[8:18]}'})()
-                    self.amount_total = 999
-                    self.currency = "usd"
-            
-            mock_session = MockCheckoutSession()
-            
-            # ✅ CALL UPDATE SUBSCRIPTION WITH PROPER MOCK DATA
-            update_subscription_from_payment(mock_session, db)
-            
-            return {
-                "status": "succeeded", 
-                "session_id": session_id,
-                "payment_intent": f"pi_test_{session_id[8:18]}",
-                "customer_email": "osamacheema41+user1@gmail.com",
-                "amount_total": 999,
-                "currency": "usd",
-                "metadata": {
-                    "plan_id": "2",
-                    "billing_cycle": "monthly",
-                    "user_email": "osamacheema41+user1@gmail.com"
-                }
-            }
+        # ✅ REMOVED: All mock/test session handling
+        # No more mock data - only real Stripe sessions
         
-        # ✅ Retrieve checkout session from Stripe
+        # ✅ Retrieve REAL checkout session from Stripe
         try:
             logger.info(f"📡 Retrieving checkout session from Stripe: {session_id}")
             
@@ -378,41 +379,6 @@ def get_payment_status(session_id: str, db: Session = Depends(get_db)):
             
         except stripe.error.InvalidRequestError as e:
             logger.error(f"❌ Stripe session not found: {str(e)}")
-            
-            if session_id.startswith("cs_test_"):
-                logger.info("🔄 Test session not found in Stripe, creating mock session")
-                
-                # ✅ FALLBACK MOCK SESSION
-                class MockCheckoutSession:
-                    def __init__(self):
-                        self.id = session_id
-                        self.payment_status = "paid"
-                        self.metadata = {
-                            "plan_id": "2",
-                            "billing_cycle": "monthly",
-                            "user_email": "osamacheema41+user1@gmail.com"
-                        }
-                        self.customer_details = type('obj', (object,), {'email': 'osamacheema41+user1@gmail.com'})()
-                        self.payment_intent = type('obj', (object,), {'id': 'pi_test_mock'})()
-                        self.amount_total = 999
-                        self.currency = "usd"
-                
-                mock_session = MockCheckoutSession()
-                update_subscription_from_payment(mock_session, db)
-                
-                return {
-                    "status": "succeeded",
-                    "session_id": session_id,
-                    "payment_intent": "pi_test_mock",
-                    "customer_email": "osamacheema41+user1@gmail.com",
-                    "amount_total": 999,
-                    "currency": "usd",
-                    "metadata": {
-                        "plan_id": "2",
-                        "billing_cycle": "monthly"
-                    }
-                }
-            
             raise HTTPException(status_code=404, detail="Payment session not found")
             
         except stripe.error.StripeError as e:
@@ -427,7 +393,7 @@ def get_payment_status(session_id: str, db: Session = Depends(get_db)):
         else:
             status_response = "failed"
         
-        # ✅ Extract payment details
+        # ✅ Extract payment details from REAL Stripe data
         payment_data = {
             "status": status_response,
             "session_id": checkout_session.id,
@@ -438,7 +404,7 @@ def get_payment_status(session_id: str, db: Session = Depends(get_db)):
             "metadata": checkout_session.metadata or {}
         }
         
-        # ✅ If payment succeeded, update user subscription
+        # ✅ If payment succeeded, update user subscription with REAL data
         if status_response == "succeeded":
             update_subscription_from_payment(checkout_session, db)
         
@@ -451,32 +417,49 @@ def get_payment_status(session_id: str, db: Session = Depends(get_db)):
         logger.error(f"❌ Unexpected error in payment status check: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-# ✅ CORRECTED: Update subscription from payment with proper field names
+
+# ✅ ALSO UPDATE: Remove mock responses from other functions
 def update_subscription_from_payment(checkout_session, db: Session):
-    """Update user subscription after successful payment"""
+    """Update user subscription after successful payment - REAL DATA ONLY"""
     try:
         logger.info("💳 Processing subscription update from payment...")
         
-        # ✅ ENHANCED METADATA EXTRACTION
-        if hasattr(checkout_session, 'metadata'):
-            metadata = checkout_session.metadata or {}
-        else:
-            metadata = {}
+        # ✅ Extract REAL metadata from Stripe
+        metadata = checkout_session.metadata or {}
         
-        # ✅ ENHANCED EMAIL EXTRACTION
+        # ✅ Extract REAL email from Stripe checkout session
         user_email = None
+        
+        # Method 1: From metadata (set during checkout creation)
         if metadata.get('user_email'):
             user_email = metadata.get('user_email')
+            logger.info(f"📧 Email from metadata: {user_email}")
+        
+        # Method 2: From customer_details (Stripe's customer info)
         elif hasattr(checkout_session, 'customer_details') and checkout_session.customer_details:
-            user_email = checkout_session.customer_details.email
+            if hasattr(checkout_session.customer_details, 'email'):
+                user_email = checkout_session.customer_details.email
+                logger.info(f"📧 Email from customer_details: {user_email}")
+        
+        # Method 3: From customer_email field
+        elif hasattr(checkout_session, 'customer_email') and checkout_session.customer_email:
+            user_email = checkout_session.customer_email
+            logger.info(f"📧 Email from customer_email: {user_email}")
+        
+        # ✅ REMOVED: All mock/fallback email handling
         
         plan_id = metadata.get('plan_id')
         billing_cycle = metadata.get('billing_cycle', 'monthly')
         
         logger.info(f"📋 Extracted data - Email: {user_email}, Plan ID: {plan_id}, Billing: {billing_cycle}")
         
-        if not user_email or not plan_id:
-            logger.error("❌ Missing user_email or plan_id in payment metadata")
+        if not user_email:
+            logger.error("❌ No user email found in Stripe session")
+            logger.error(f"❌ Available metadata: {metadata}")
+            return
+        
+        if not plan_id:
+            logger.error("❌ Missing plan_id in payment metadata")
             logger.error(f"❌ Available metadata: {metadata}")
             return
         
@@ -484,13 +467,17 @@ def update_subscription_from_payment(checkout_session, db: Session):
         decoded_email = decode_email(user_email)
         logger.info(f"💳 Updating subscription for {decoded_email}, plan {plan_id}")
         
-        # Find user
+        # Find user in database
         user = db.query(User).filter(User.email == decoded_email).first()
         if not user:
             logger.error(f"❌ User not found: {decoded_email}")
-            return
+            # Try with original email format
+            user = db.query(User).filter(User.email == user_email).first()
+            if not user:
+                logger.error(f"❌ User not found with either email format")
+                return
         
-        logger.info(f"👤 Found user: {user.id}")
+        logger.info(f"👤 Found user: {user.id} - {user.email}")
         
         # Get plan details
         plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == int(plan_id)).first()
@@ -518,16 +505,18 @@ def update_subscription_from_payment(checkout_session, db: Session):
         else:
             expiry_date = datetime.utcnow() + timedelta(days=30)
         
-        # ✅ FIXED: Create new subscription with CORRECT field names
+        # Create new subscription with REAL payment data
         billing_cycle_enum = get_billing_cycle_enum(billing_cycle)
         
-        # ✅ EXTRACT PAYMENT INTENT ID SAFELY
+        # Extract REAL payment intent ID from Stripe
         payment_intent_id = None
         if hasattr(checkout_session, 'payment_intent') and checkout_session.payment_intent:
             if hasattr(checkout_session.payment_intent, 'id'):
                 payment_intent_id = checkout_session.payment_intent.id
             else:
                 payment_intent_id = str(checkout_session.payment_intent)
+        
+        logger.info(f"💳 Creating new subscription with payment_intent: {payment_intent_id}")
         
         new_subscription = UserSubscription(
             user_id=user.id,
@@ -540,28 +529,42 @@ def update_subscription_from_payment(checkout_session, db: Session):
             auto_renew=True,
             queries_used=0,
             documents_uploaded=0,
-            last_payment_date=datetime.utcnow(),  # ✅ CORRECT: last_payment_date
-            last_payment_intent_id=payment_intent_id,  # ✅ CORRECT: last_payment_intent_id  
+            last_payment_date=datetime.utcnow(),
+            last_payment_intent_id=payment_intent_id,
             payment_method_id=None,
             renewal_attempts=0,
             renewal_failed=False
         )
         
-        logger.info("📝 Created new subscription object with correct field names")
+        logger.info("📝 Created new subscription object")
         
         db.add(new_subscription)
         db.commit()
+        db.refresh(new_subscription)
         
         logger.info(f"✅ Subscription updated successfully for {decoded_email}")
         logger.info(f"✅ New subscription ID: {new_subscription.id}")
         logger.info(f"✅ Plan: {plan.name}, Billing: {billing_cycle}, Expiry: {expiry_date}")
         
+        # Verify the update
+        verification_sub = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user.id,
+            UserSubscription.active == True
+        ).first()
+        
+        if verification_sub:
+            logger.info(f"✅ VERIFICATION: Active subscription found - Plan ID: {verification_sub.plan_id}")
+        else:
+            logger.error(f"❌ VERIFICATION FAILED: No active subscription found after update")
+        
     except Exception as e:
         logger.error(f"❌ Error updating subscription from payment: {str(e)}")
         logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         if db:
             db.rollback()
-        raise  # Re-raise to see the full error
+        raise
 
 # ✅ 6. TEST ENDPOINT
 @router.get("/test")
