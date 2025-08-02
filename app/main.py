@@ -48,6 +48,21 @@ try:
 except Exception as e:
     print(f"❌ Subscription router error: {e}")
 
+try:
+    from app.routers.payment_methods import router as payment_methods_router
+    app.include_router(payment_methods_router)
+    print("✅ Payment Methods router registered successfully")
+except Exception as e:
+    print(f"❌ Payment Methods router error: {e}")
+
+try:
+    from app.routers.webhook_enhanced import router as webhook_enhanced_router
+    app.include_router(webhook_enhanced_router)
+    print("✅ Webhook Enhanced router registered successfully")
+except Exception as e:
+    print(f"❌ Webhook Enhanced router error: {e}")
+
+
 @app.get("/")
 async def root():
     return {"message": "SuperEngineer API is running", "status": "healthy"}
@@ -69,6 +84,45 @@ async def debug_routes():
                 "name": getattr(route, 'name', 'unnamed')
             })
     return {"routes": routes}
+
+# ✅ NEW: Payment Method Status Check
+@app.get("/debug/payment-methods-status")
+async def payment_methods_status():
+    """Debug endpoint to check payment methods functionality"""
+    try:
+        import stripe
+        from app.config import STRIPE_SECRET_KEY
+        
+        stripe.api_key = STRIPE_SECRET_KEY
+        
+        # Test Stripe connection
+        try:
+            stripe.Account.retrieve()
+            stripe_status = "connected"
+        except Exception as e:
+            stripe_status = f"error: {str(e)}"
+        
+        return {
+            "payment_methods_enabled": True,
+            "stripe_configured": bool(STRIPE_SECRET_KEY),
+            "stripe_status": stripe_status,
+            "available_endpoints": {
+                "get_payment_methods": "GET /payment-methods/",
+                "setup_payment_method": "POST /payment-methods/setup-intent",
+                "confirm_setup": "POST /payment-methods/confirm-setup/{setup_intent_id}",
+                "set_default": "POST /payment-methods/set-default/{payment_method_id}",
+                "delete_method": "DELETE /payment-methods/{payment_method_id}",
+                "charge_saved": "POST /payment-methods/charge-saved",
+                "enhanced_checkout": "POST /payment-methods/enhanced-checkout"
+            }
+        }
+    except Exception as e:
+        return {
+            "payment_methods_enabled": False,
+            "error": str(e)
+        }
+
+
 
 # CORS preflight handler
 @app.options("/{path:path}")
