@@ -394,65 +394,103 @@ def get_current_user_info(token: str = Depends(oauth2_scheme), db: Session = Dep
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# app/routers/auth.py - Add these routes
-
 @router.post("/google-signup")
 def google_signup(request: dict, db: Session = Depends(get_db)):
-    """Handle Google signup for both web and native"""
+    """Handle Google signup for both web and native - FIXED VERSION"""
     try:
         firebase_uid = request.get('firebase_uid')
         email = request.get('email')
         full_name = request.get('full_name')
         platform = request.get('platform', 'unknown')
         
+        # ✅ ENHANCED validation
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        if not full_name:
+            raise HTTPException(status_code=400, detail="Full name is required")
+        
+        print(f"🌐 Google signup attempt: {email} from {platform}")
+        
         # Check if user already exists
         existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
-            raise HTTPException(status_code=400, detail="User already exists")
+            print(f"❌ User already exists: {email}")
+            raise HTTPException(status_code=400, detail="User with this email already exists. Please try logging in instead.")
         
-        # Create new user
+        # ✅ FIXED: Create new user with proper fields
         new_user = User(
             full_name=full_name,
             email=email,
-            password='',  # No password for Google users
+            password=bcrypt.hash('google_auth_placeholder'),  # ✅ Hash placeholder password
             is_verified=True,  # Google accounts are pre-verified
-            is_2fa_enabled=False,  # Default false
+            is_2fa_enabled=False,  # Default false for Google users
             auth_method='google',
             firebase_uid=firebase_uid,
-            signup_platform=platform  # Track signup platform
+            # ✅ REMOVED: signup_platform (field doesn't exist in model)
+            created_at=datetime.utcnow(),
+            login_count=0,
+            first_login_completed=False
         )
         
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
         
+        print(f"✅ Google signup successful: {new_user.id} - {email}")
+        
         return {
             "id": new_user.id,
             "message": "Google signup successful",
             "platform": platform,
             "user": {
+                "id": new_user.id,
                 "email": new_user.email,
-                "full_name": new_user.full_name
+                "full_name": new_user.full_name,
+                "is_verified": new_user.is_verified
             }
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"❌ Google signup error: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Google signup failed: {str(e)}")
 
 @router.post("/google-login")
 def google_login(request: dict, db: Session = Depends(get_db)):
-    """Handle Google login for both web and native"""
+    """Handle Google login for both web and native - FIXED VERSION"""
     try:
         firebase_uid = request.get('firebase_uid')
         email = request.get('email')
+        full_name = request.get('full_name')  # ✅ For updating user info if needed
         platform = request.get('platform', 'unknown')
+        
+        # ✅ ENHANCED validation
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        
+        print(f"🌐 Google login attempt: {email} from {platform}")
         
         # Find user
         user = db.query(User).filter(User.email == email).first()
         
         if not user:
-            raise HTTPException(status_code=404, detail="User not found. Please sign up first.")
+            print(f"❌ User not found: {email}")
+            raise HTTPException(
+                status_code=404, 
+                detail="Account not found. Please sign up first with Google."
+            )
+        
+        # ✅ UPDATE: Refresh Firebase UID if different
+        if firebase_uid and user.firebase_uid != firebase_uid:
+            user.firebase_uid = firebase_uid
+            print(f"🔄 Updated Firebase UID for {email}")
+        
+        # ✅ UPDATE: Refresh user info if provided
+        if full_name and user.full_name != full_name:
+            user.full_name = full_name
+            print(f"🔄 Updated full name for {email}")
         
         # Update login tracking
         is_first_login = update_login_tracking(user, db)
@@ -461,17 +499,40 @@ def google_login(request: dict, db: Session = Depends(get_db)):
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
         
+        print(f"✅ Google login successful: {user.id} - {email}")
+        
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "user": user,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_verified": user.is_verified,
+                "is_2fa_enabled": user.is_2fa_enabled
+            },
             "is_first_login": is_first_login,
             "login_count": user.login_count,
             "platform": platform
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Google login error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Google login failed: {str(e)}")
 
-        
+# ✅ DEBUGGING ROUTE - Add this temporarily to test
+@router.get("/debug/google-config")
+def debug_google_config():
+    """Debug Google configuration"""
+    return {
+        "message": "Google auth debug info",
+        "backend_ready": True,
+        "routes_available": [
+            "POST /auth/google-signup",
+            "POST /auth/google-login"
+        ],
+        "timestamp": datetime.utcnow().isoformat()
+    }
