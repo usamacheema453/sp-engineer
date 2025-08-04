@@ -38,3 +38,4 @@ class User(Base):
     reset_token = Column(String, nullable=True)
     last_login = Column(DateTime, nullable=True)
     settings = relationship("UserSettings", back_populates="user", uselist=False)
+    firebase_uid = Column(String, nullable=True, unique=True) 

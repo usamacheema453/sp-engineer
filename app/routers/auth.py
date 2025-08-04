@@ -393,3 +393,85 @@ def get_current_user_info(token: str = Depends(oauth2_scheme), db: Session = Dep
         )
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+# app/routers/auth.py - Add these routes
+
+@router.post("/google-signup")
+def google_signup(request: dict, db: Session = Depends(get_db)):
+    """Handle Google signup for both web and native"""
+    try:
+        firebase_uid = request.get('firebase_uid')
+        email = request.get('email')
+        full_name = request.get('full_name')
+        platform = request.get('platform', 'unknown')
+        
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User already exists")
+        
+        # Create new user
+        new_user = User(
+            full_name=full_name,
+            email=email,
+            password='',  # No password for Google users
+            is_verified=True,  # Google accounts are pre-verified
+            is_2fa_enabled=False,  # Default false
+            auth_method='google',
+            firebase_uid=firebase_uid,
+            signup_platform=platform  # Track signup platform
+        )
+        
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        return {
+            "id": new_user.id,
+            "message": "Google signup successful",
+            "platform": platform,
+            "user": {
+                "email": new_user.email,
+                "full_name": new_user.full_name
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/google-login")
+def google_login(request: dict, db: Session = Depends(get_db)):
+    """Handle Google login for both web and native"""
+    try:
+        firebase_uid = request.get('firebase_uid')
+        email = request.get('email')
+        platform = request.get('platform', 'unknown')
+        
+        # Find user
+        user = db.query(User).filter(User.email == email).first()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found. Please sign up first.")
+        
+        # Update login tracking
+        is_first_login = update_login_tracking(user, db)
+        
+        # Create tokens
+        access_token = create_access_token(data={"sub": str(user.id)})
+        refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": user,
+            "is_first_login": is_first_login,
+            "login_count": user.login_count,
+            "platform": platform
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+        
