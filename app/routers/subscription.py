@@ -603,6 +603,145 @@ def debug_email_decoding(email: str):
             "status": "failed"
         }
 
+@router.get("/query-status/{email}")
+def get_query_status(email: str, db: Session = Depends(get_db)):
+    """Get current query usage status for user"""
+    try:
+        decoded_email = decode_email(email)
+        logger.info(f"📊 Getting query status for: {decoded_email}")
+        
+        # Find user
+        user = db.query(User).filter(User.email == decoded_email).first()
+        if not user:
+            logger.warning(f"❌ User not found: {decoded_email}")
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get active subscription
+        subscription = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user.id,
+            UserSubscription.active == True
+        ).first()
+        
+        if not subscription:
+            logger.info(f"📊 No active subscription for: {decoded_email}")
+            return {
+                "has_subscription": False,
+                "queries_used": 0,
+                "queries_remaining": 0,
+                "query_limit": 0,
+                "plan": "none"
+            }
+        
+        # Check if subscription expired
+        if subscription.expiry_date and subscription.expiry_date < datetime.utcnow():
+            subscription.active = False
+            db.commit()
+            logger.info(f"📊 Subscription expired for: {decoded_email}")
+            return {
+                "has_subscription": False,
+                "queries_used": subscription.queries_used,
+                "queries_remaining": 0,
+                "query_limit": 0,
+                "plan": "expired"
+            }
+        
+        # Get plan details
+        plan = subscription.plan
+        
+        if plan.query_limit <= 0:  # Unlimited plans
+            logger.info(f"📊 Unlimited plan for: {decoded_email}")
+            return {
+                "has_subscription": True,
+                "queries_used": subscription.queries_used,
+                "queries_remaining": "unlimited",
+                "query_limit": "unlimited",
+                "plan": plan.name.lower()
+            }
+        
+        # Limited plans
+        queries_remaining = max(0, plan.query_limit - subscription.queries_used)
+        
+        logger.info(f"📊 Query status for {decoded_email}: {subscription.queries_used}/{plan.query_limit}")
+        
+        return {
+            "has_subscription": True,
+            "queries_used": subscription.queries_used,
+            "queries_remaining": queries_remaining,
+            "query_limit": plan.query_limit,
+            "plan": plan.name.lower()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting query status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get query status: {str(e)}")
+
+# Add this endpoint in your subscription backend (app/routers/subscription.py)
+
+@router.post("/increment-query")
+def increment_query_count(request: dict, db: Session = Depends(get_db)):
+    """Increment query count for user - called by chat API"""
+    try:
+        email = request.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Email required")
+        
+        decoded_email = decode_email(email)
+        logger.info(f"📊 Incrementing query count for: {decoded_email}")
+        
+        # Find user
+        user = db.query(User).filter(User.email == decoded_email).first()
+        if not user:
+            logger.warning(f"❌ User not found: {decoded_email}")
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Find active subscription
+        subscription = db.query(UserSubscription).filter(
+            UserSubscription.user_id == user.id,
+            UserSubscription.active == True
+        ).first()
+        
+        if not subscription:
+            logger.warning(f"❌ No active subscription: {decoded_email}")
+            return {
+                "success": False,
+                "message": "No active subscription found",
+                "queries_used": 0
+            }
+        
+        # Check if subscription expired
+        if subscription.expiry_date and subscription.expiry_date < datetime.utcnow():
+            subscription.active = False
+            db.commit()
+            logger.info(f"📊 Subscription expired: {decoded_email}")
+            return {
+                "success": False,
+                "message": "Subscription expired",
+                "queries_used": subscription.queries_used
+            }
+        
+        # Increment query count
+        old_count = subscription.queries_used or 0
+        subscription.queries_used = old_count + 1
+        db.commit()
+        
+        logger.info(f"✅ Query count updated: {decoded_email} ({old_count} → {subscription.queries_used})")
+        
+        return {
+            "success": True,
+            "message": "Query count updated",
+            "queries_used": subscription.queries_used,
+            "previous_count": old_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error incrementing query count: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update query count: {str(e)}")        
+
 # ✅ 8. DEBUG SUBSCRIPTION DATABASE
 @router.get("/debug/user/{email}")
 def debug_user_subscriptions(email: str, db: Session = Depends(get_db)):
