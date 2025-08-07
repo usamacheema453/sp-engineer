@@ -1,4 +1,4 @@
-# app/services/renewal_service_enhanced.py - Enhanced Renewal with Saved Payment Methods
+# app/utils/renewal_service_5min.py - Updated for 5-minute cron job
 
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -8,39 +8,52 @@ from app.models.subscription import UserSubscription, PaymentHistory, BillingCyc
 from app.utils.email import send_email
 import stripe
 import logging
+import os
 from app.config import STRIPE_SECRET_KEY
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging for 5-min intervals
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/renewal_5min.log'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Initialize Stripe
 stripe.api_key = STRIPE_SECRET_KEY
 
-class EnhancedRenewalService:
+class FiveMinuteRenewalService:
     def __init__(self):
         self.db = SessionLocal()
         self.max_retry_attempts = 3
-        self.retry_delay_days = 2
+        self.retry_delay_minutes = 10  # ✅ Changed from days to minutes for testing
     
     def __del__(self):
         if hasattr(self, 'db'):
             self.db.close()
     
     def run_renewal_check(self):
-        """Main method to check and process renewals using saved payment methods"""
-        logger.info("🔄 Starting enhanced renewal check...")
+        """Main method for 5-minute interval renewal checks"""
+        logger.info("🚀 Starting 5-Minute Renewal Service...")
         
         try:
-            # Get subscriptions that need renewal
+            # Get subscriptions that need renewal (more aggressive for testing)
             subscriptions_to_renew = self.get_subscriptions_for_renewal()
-            logger.info(f"Found {len(subscriptions_to_renew)} subscriptions to process")
+            logger.info(f"📊 Found {len(subscriptions_to_renew)} subscriptions to process")
+            
+            if len(subscriptions_to_renew) == 0:
+                logger.info("✅ No subscriptions need renewal at this time")
+                return
             
             success_count = 0
             failure_count = 0
             
             for subscription in subscriptions_to_renew:
                 try:
+                    logger.info(f"🔄 Processing subscription ID: {subscription.id} for user: {subscription.user.email}")
                     result = self.process_subscription_renewal(subscription)
                     if result:
                         success_count += 1
@@ -52,51 +65,56 @@ class EnhancedRenewalService:
                     failure_count += 1
                     logger.error(f"❌ Error processing renewal for user {subscription.user.email}: {e}")
             
-            # Send summary report
-            self.send_renewal_summary(success_count, failure_count)
-            
-            logger.info(f"🏁 Enhanced renewal check completed. Success: {success_count}, Failures: {failure_count}")
+            # Log summary
+            logger.info(f"📈 Renewal Summary - Success: {success_count}, Failures: {failure_count}")
             
         except Exception as e:
-            logger.error(f"❌ Critical error in renewal check: {e}")
+            logger.error(f"❌ Critical error in 5-minute renewal check: {e}")
         finally:
             self.db.close()
     
     def get_subscriptions_for_renewal(self):
-        """Get subscriptions that need renewal and have saved payment methods"""
-        # Get subscriptions expiring in the next 3 days
-        renewal_threshold = datetime.utcnow() + timedelta(days=3)
+        """Get subscriptions that need renewal - optimized for 5-minute intervals"""
+        # ✅ More aggressive renewal window for testing (next 10 minutes)
+        renewal_threshold = datetime.utcnow() + timedelta(minutes=10)
+        
+        logger.info(f"🔍 Looking for subscriptions expiring before: {renewal_threshold}")
         
         subscriptions = self.db.query(UserSubscription).join(User).filter(
             UserSubscription.active == True,
             UserSubscription.auto_renew == True,
             UserSubscription.renewal_failed == False,
             UserSubscription.next_renewal_date <= renewal_threshold,
-            UserSubscription.payment_method_id.isnot(None),  # ✅ Must have saved payment method
+            UserSubscription.payment_method_id.isnot(None),  # Must have saved payment method
             User.auto_renew_enabled == True,
-            User.stripe_customer_id.isnot(None)  # ✅ Must have Stripe customer ID
+            User.stripe_customer_id.isnot(None)
         ).all()
         
-        # Also get failed renewals ready for retry
+        logger.info(f"📊 Found {len(subscriptions)} subscriptions ready for renewal")
+        
+        # Also get failed renewals ready for retry (retry after 10 minutes)
+        retry_threshold = datetime.utcnow() - timedelta(minutes=self.retry_delay_minutes)
         retry_subscriptions = self.db.query(UserSubscription).join(User).filter(
             UserSubscription.active == True,
             UserSubscription.auto_renew == True,
             UserSubscription.renewal_failed == True,
             UserSubscription.renewal_attempts < self.max_retry_attempts,
-            UserSubscription.last_renewal_attempt <= datetime.utcnow() - timedelta(days=self.retry_delay_days),
+            UserSubscription.last_renewal_attempt <= retry_threshold,
             UserSubscription.payment_method_id.isnot(None),
             User.auto_renew_enabled == True,
             User.stripe_customer_id.isnot(None)
         ).all()
         
+        logger.info(f"📊 Found {len(retry_subscriptions)} subscriptions ready for retry")
+        
         return list(set(subscriptions + retry_subscriptions))
     
     def process_subscription_renewal(self, subscription: UserSubscription) -> bool:
-        """Process renewal for a single subscription using saved payment method"""
+        """Process renewal for a single subscription"""
         user = subscription.user
         plan = subscription.plan
         
-        logger.info(f"🔄 Processing renewal for {user.email} - {plan.name} ({subscription.billing_cycle.value})")
+        logger.info(f"💳 Processing renewal: {user.email} - {plan.name} ({subscription.billing_cycle.value})")
         
         # Verify payment method still exists
         if not self.verify_payment_method_exists(user.stripe_customer_id, subscription.payment_method_id):
@@ -116,12 +134,16 @@ class EnhancedRenewalService:
             logger.error(f"❌ No price configured for {plan.name} - {subscription.billing_cycle.value}")
             return False
         
+        logger.info(f"💰 Renewal amount: ${amount/100:.2f}")
+        
         # Update renewal attempt tracking
         subscription.renewal_attempts += 1
         subscription.last_renewal_attempt = datetime.utcnow()
         
         try:
             # Create PaymentIntent with saved payment method
+            logger.info(f"🔄 Creating payment intent with saved method: {subscription.payment_method_id}")
+            
             payment_intent = stripe.PaymentIntent.create(
                 amount=amount,
                 currency='usd',
@@ -129,15 +151,18 @@ class EnhancedRenewalService:
                 payment_method=subscription.payment_method_id,
                 confirmation_method='automatic',
                 confirm=True,
-                off_session=True,  # ✅ Critical for automated renewals
+                off_session=True,  # Critical for automated renewals
                 metadata={
                     'type': 'renewal',
                     'user_id': str(user.id),
                     'subscription_id': str(subscription.id),
                     'plan_name': plan.name,
-                    'billing_cycle': subscription.billing_cycle.value
+                    'billing_cycle': subscription.billing_cycle.value,
+                    'renewal_service': '5_minute_interval'
                 }
             )
+            
+            logger.info(f"💳 Payment intent created: {payment_intent.id}, Status: {payment_intent.status}")
             
             if payment_intent.status == 'succeeded':
                 # Payment successful - extend subscription
@@ -161,12 +186,12 @@ class EnhancedRenewalService:
             else:
                 # Payment requires action or failed
                 error_message = f"Payment status: {payment_intent.status}"
+                logger.warning(f"⚠️ Payment incomplete: {error_message}")
                 self.handle_renewal_failure(subscription, error_message, 'payment_incomplete')
                 self.db.commit()
                 return False
                 
         except stripe.error.CardError as e:
-            # Card was declined
             logger.warning(f"⚠️ Card declined for renewal: {e.user_message}")
             self.handle_renewal_failure(subscription, e.user_message, 'card_declined')
             self.db.commit()
@@ -191,32 +216,24 @@ class EnhancedRenewalService:
             return False
     
     def verify_payment_method_exists(self, customer_id: str, payment_method_id: str) -> bool:
-        """Verify that payment method still exists and is attached to customer"""
+        """Verify that payment method still exists"""
         try:
             payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
-            return payment_method.customer == customer_id
+            is_valid = payment_method.customer == customer_id
+            logger.info(f"🔍 Payment method verification: {payment_method_id} - Valid: {is_valid}")
+            return is_valid
         except stripe.error.InvalidRequestError:
+            logger.warning(f"⚠️ Payment method not found: {payment_method_id}")
             return False
-        except Exception:
+        except Exception as e:
+            logger.error(f"❌ Error verifying payment method: {e}")
             return False
-    
-    def handle_missing_payment_method(self, subscription: UserSubscription):
-        """Handle case where payment method no longer exists"""
-        subscription.renewal_failed = True
-        subscription.failure_reason = "Payment method no longer available"
-        subscription.auto_renew = False  # Disable auto-renewal
-        
-        user = subscription.user
-        plan = subscription.plan
-        
-        # Send email notification
-        self.send_missing_payment_method_email(user, plan)
-        
-        logger.warning(f"⚠️ Disabled auto-renewal for {user.email} - payment method missing")
     
     def extend_subscription(self, subscription: UserSubscription, days: int, payment_intent):
         """Extend subscription period"""
+        old_expiry = subscription.expiry_date
         new_expiry = subscription.expiry_date + timedelta(days=days)
+        
         subscription.expiry_date = new_expiry
         subscription.next_renewal_date = new_expiry
         subscription.last_payment_date = datetime.utcnow()
@@ -226,7 +243,7 @@ class EnhancedRenewalService:
         subscription.queries_used = 0
         subscription.documents_uploaded = 0
         
-        logger.info(f"✅ Subscription extended until: {new_expiry}")
+        logger.info(f"📅 Subscription extended: {old_expiry} → {new_expiry}")
     
     def create_renewal_payment_record(self, subscription: UserSubscription, payment_intent, amount: int):
         """Create payment history record for renewal"""
@@ -240,10 +257,10 @@ class EnhancedRenewalService:
             billing_cycle=subscription.billing_cycle,
             is_renewal=True,
             payment_date=datetime.utcnow(),
-            meta_info=f"Automatic renewal - Payment Method: {subscription.payment_method_id[-4:]}"
+            meta_info=f"5-minute renewal service - PM: {subscription.payment_method_id[-4:]}"
         )
         self.db.add(payment_record)
-        logger.info(f"✅ Renewal payment record created")
+        logger.info(f"📝 Payment history record created")
     
     def handle_renewal_failure(self, subscription: UserSubscription, error_message: str, error_type: str):
         """Handle renewal failure"""
@@ -253,6 +270,8 @@ class EnhancedRenewalService:
         user = subscription.user
         plan = subscription.plan
         
+        logger.warning(f"⚠️ Renewal failure handled: {error_type} - {error_message}")
+        
         # Check if we've reached max retry attempts
         if subscription.renewal_attempts >= self.max_retry_attempts:
             logger.warning(f"⚠️ Max retry attempts reached for {user.email}. Disabling auto-renewal.")
@@ -260,31 +279,44 @@ class EnhancedRenewalService:
             self.send_renewal_failed_final_email(user, plan, error_message)
         else:
             # Send retry notification
-            next_retry = datetime.utcnow() + timedelta(days=self.retry_delay_days)
+            next_retry = datetime.utcnow() + timedelta(minutes=self.retry_delay_minutes)
+            logger.info(f"🔄 Will retry renewal at: {next_retry}")
             self.send_renewal_failed_retry_email(user, plan, error_message, next_retry)
+    
+    def handle_missing_payment_method(self, subscription: UserSubscription):
+        """Handle case where payment method no longer exists"""
+        subscription.renewal_failed = True
+        subscription.failure_reason = "Payment method no longer available"
+        subscription.auto_renew = False
+        
+        user = subscription.user
+        plan = subscription.plan
+        
+        self.send_missing_payment_method_email(user, plan)
+        logger.warning(f"⚠️ Disabled auto-renewal for {user.email} - payment method missing")
     
     def send_renewal_success_email(self, user: User, plan, billing_cycle: str, amount: int):
         """Send renewal success notification"""
         if not user.email_notifications:
+            logger.info(f"📧 Skipping email notification (user preference): {user.email}")
             return
         
-        subject = f"✅ {plan.name} Plan Renewed Successfully"
+        subject = f"✅ {plan.name} Plan Renewed Successfully (5-Min Service)"
         body = f"""
 Hi {user.full_name},
 
-Great news! Your {plan.name} plan has been automatically renewed.
+Your {plan.name} plan has been automatically renewed by our 5-minute renewal service.
 
 💳 Payment Details:
 - Plan: {plan.name}
-- Billing: {billing_cycle.title()}
 - Amount: ${amount / 100:.2f}
-- Payment Method: ****{user.default_payment_method_id[-4:] if user.default_payment_method_id else 'xxxx'}
-- Next Renewal: {(datetime.utcnow() + timedelta(days=365 if billing_cycle == 'yearly' else 30)).strftime('%B %d, %Y')}
+- Billing: {billing_cycle.title()}
+- Processed: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
 
-Your subscription continues uninterrupted. Thank you for using SuperEngineer!
+Next renewal: {(datetime.utcnow() + timedelta(days=365 if billing_cycle == 'yearly' else 30)).strftime('%B %d, %Y')}
 
 Best regards,
-The SuperEngineer Team
+SuperEngineer Team
         """
         
         try:
@@ -298,7 +330,7 @@ The SuperEngineer Team
         if not user.email_notifications:
             return
         
-        subject = f"⚠️ Payment Issue - {plan.name} Plan Renewal"
+        subject = f"⚠️ Payment Issue - {plan.name} Plan (Will Retry)"
         body = f"""
 Hi {user.full_name},
 
@@ -306,12 +338,12 @@ We encountered an issue while renewing your {plan.name} plan:
 
 ❌ Issue: {error_message}
 
-Don't worry! We'll automatically retry the payment on {next_retry.strftime('%B %d, %Y')}.
+🔄 We'll retry the payment at: {next_retry.strftime('%Y-%m-%d %H:%M:%S')}
 
-If you'd like to update your payment method or renew manually, please log in to your account.
+Our 5-minute renewal service will automatically attempt renewal again.
 
 Best regards,
-The SuperEngineer Team
+SuperEngineer Team
         """
         
         try:
@@ -333,18 +365,13 @@ We were unable to renew your {plan.name} plan after multiple attempts:
 
 ❌ Final Error: {error_message}
 
-⚠️ Your subscription will expire soon. To continue using SuperEngineer:
-
+⚠️ Auto-renewal has been disabled. Please:
 1. Log in to your account
 2. Update your payment method
 3. Manually renew your subscription
 
-We've temporarily disabled auto-renewal for your account. You can re-enable it after updating your payment method.
-
-Need help? Contact our support team.
-
 Best regards,
-The SuperEngineer Team
+SuperEngineer Team
         """
         
         try:
@@ -362,18 +389,12 @@ The SuperEngineer Team
         body = f"""
 Hi {user.full_name},
 
-We noticed that your saved payment method is no longer available for your {plan.name} plan.
+Your saved payment method is no longer available for your {plan.name} plan.
 
-To continue enjoying uninterrupted service:
-
-1. Log in to your account
-2. Add a new payment method
-3. Re-enable auto-renewal
-
-Your subscription is still active, but we've temporarily disabled auto-renewal until you update your payment method.
+Please log in and add a new payment method to continue service.
 
 Best regards,
-The SuperEngineer Team
+SuperEngineer Team
         """
         
         try:
@@ -381,46 +402,17 @@ The SuperEngineer Team
             logger.info(f"📧 Missing payment method email sent to {user.email}")
         except Exception as e:
             logger.error(f"❌ Failed to send missing payment method email: {e}")
-    
-    def send_renewal_summary(self, success_count: int, failure_count: int):
-        """Send renewal summary to admin"""
-        if success_count == 0 and failure_count == 0:
-            return
-        
-        subject = f"🔄 Enhanced Renewal Summary - {datetime.utcnow().strftime('%Y-%m-%d')}"
-        body = f"""
-Enhanced Renewal Process Summary:
 
-✅ Successful Renewals: {success_count}
-❌ Failed Renewals: {failure_count}
-📅 Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
-💳 Method: Saved Payment Methods
-
-Total Processed: {success_count + failure_count}
-Success Rate: {(success_count / (success_count + failure_count) * 100):.1f}%
-
-📊 System Status: Enhanced renewal service with saved payment methods working correctly.
-        """
-        
-        # Send to admin email (configure in environment)
-        admin_email = os.getenv("ADMIN_EMAIL", "admin@superengineer.com")
-        try:
-            send_email(admin_email, subject, body)
-            logger.info("📧 Renewal summary sent to admin")
-        except Exception as e:
-            logger.error(f"❌ Failed to send renewal summary: {e}")
-
-# ✅ Standalone script to run the enhanced renewal service
-def run_enhanced_renewal_service():
-    """Entry point for cron job - Enhanced version"""
+# ✅ Entry point for 5-minute cron job
+def run_5_minute_renewal_service():
+    """Entry point for 5-minute interval cron job"""
     try:
-        logger.info("🚀 Starting Enhanced Renewal Service with Saved Payment Methods")
-        service = EnhancedRenewalService()
+        logger.info("🚀 Starting 5-Minute Renewal Service")
+        service = FiveMinuteRenewalService()
         service.run_renewal_check()
-        logger.info("✅ Enhanced Renewal Service completed successfully")
+        logger.info("✅ 5-Minute Renewal Service completed")
     except Exception as e:
-        logger.error(f"❌ Enhanced Renewal Service failed: {e}")
+        logger.error(f"❌ 5-Minute Renewal Service failed: {e}")
 
 if __name__ == "__main__":
-    import os
-    run_enhanced_renewal_service()
+    run_5_minute_renewal_service()
