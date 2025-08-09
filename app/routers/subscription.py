@@ -420,7 +420,7 @@ def get_payment_status(session_id: str, db: Session = Depends(get_db)):
 
 # ✅ ALSO UPDATE: Remove mock responses from other functions
 def update_subscription_from_payment(checkout_session, db: Session):
-    """Update user subscription after successful payment - REAL DATA ONLY"""
+    """Update user subscription after successful payment - FIXED VERSION"""
     try:
         logger.info("💳 Processing subscription update from payment...")
         
@@ -445,8 +445,6 @@ def update_subscription_from_payment(checkout_session, db: Session):
         elif hasattr(checkout_session, 'customer_email') and checkout_session.customer_email:
             user_email = checkout_session.customer_email
             logger.info(f"📧 Email from customer_email: {user_email}")
-        
-        # ✅ REMOVED: All mock/fallback email handling
         
         plan_id = metadata.get('plan_id')
         billing_cycle = metadata.get('billing_cycle', 'monthly')
@@ -479,6 +477,16 @@ def update_subscription_from_payment(checkout_session, db: Session):
         
         logger.info(f"👤 Found user: {user.id} - {user.email}")
         
+        # ✅ FIX: Update stripe_customer_id if missing
+        stripe_customer_id = checkout_session.customer
+        if stripe_customer_id and not user.stripe_customer_id:
+            user.stripe_customer_id = stripe_customer_id
+            logger.info(f"✅ Updated user stripe_customer_id: {stripe_customer_id}")
+        elif stripe_customer_id and user.stripe_customer_id != stripe_customer_id:
+            # Update if different (shouldn't happen but safety check)
+            user.stripe_customer_id = stripe_customer_id
+            logger.info(f"🔄 Updated user stripe_customer_id: {stripe_customer_id}")
+        
         # Get plan details
         plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == int(plan_id)).first()
         if not plan:
@@ -510,13 +518,19 @@ def update_subscription_from_payment(checkout_session, db: Session):
         
         # Extract REAL payment intent ID from Stripe
         payment_intent_id = None
+        payment_method_id = None
+        
         if hasattr(checkout_session, 'payment_intent') and checkout_session.payment_intent:
             if hasattr(checkout_session.payment_intent, 'id'):
                 payment_intent_id = checkout_session.payment_intent.id
+                # ✅ FIX: Also get payment method ID for future renewals
+                if hasattr(checkout_session.payment_intent, 'payment_method'):
+                    payment_method_id = checkout_session.payment_intent.payment_method
             else:
                 payment_intent_id = str(checkout_session.payment_intent)
         
         logger.info(f"💳 Creating new subscription with payment_intent: {payment_intent_id}")
+        logger.info(f"💳 Payment method ID: {payment_method_id}")
         
         new_subscription = UserSubscription(
             user_id=user.id,
@@ -531,7 +545,7 @@ def update_subscription_from_payment(checkout_session, db: Session):
             documents_uploaded=0,
             last_payment_date=datetime.utcnow(),
             last_payment_intent_id=payment_intent_id,
-            payment_method_id=None,
+            payment_method_id=payment_method_id,  # ✅ FIX: Save payment method for renewals
             renewal_attempts=0,
             renewal_failed=False
         )
@@ -539,12 +553,21 @@ def update_subscription_from_payment(checkout_session, db: Session):
         logger.info("📝 Created new subscription object")
         
         db.add(new_subscription)
+        
+        # ✅ FIX: Update user's default payment method if they don't have one
+        if payment_method_id and not user.default_payment_method_id:
+            user.default_payment_method_id = payment_method_id
+            logger.info(f"✅ Set default payment method: {payment_method_id}")
+        
+        # ✅ CRITICAL: Commit user updates first, then subscription
         db.commit()
         db.refresh(new_subscription)
+        db.refresh(user)  # ✅ FIX: Refresh user to see updated stripe_customer_id
         
         logger.info(f"✅ Subscription updated successfully for {decoded_email}")
         logger.info(f"✅ New subscription ID: {new_subscription.id}")
         logger.info(f"✅ Plan: {plan.name}, Billing: {billing_cycle}, Expiry: {expiry_date}")
+        logger.info(f"✅ User stripe_customer_id: {user.stripe_customer_id}")  # ✅ FIX: Log verification
         
         # Verify the update
         verification_sub = db.query(UserSubscription).filter(
@@ -557,6 +580,13 @@ def update_subscription_from_payment(checkout_session, db: Session):
         else:
             logger.error(f"❌ VERIFICATION FAILED: No active subscription found after update")
         
+        # ✅ FIX: Verify user stripe_customer_id was saved
+        updated_user = db.query(User).filter(User.id == user.id).first()
+        if updated_user.stripe_customer_id:
+            logger.info(f"✅ VERIFICATION: User stripe_customer_id saved: {updated_user.stripe_customer_id}")
+        else:
+            logger.error(f"❌ VERIFICATION FAILED: User stripe_customer_id not saved")
+        
     except Exception as e:
         logger.error(f"❌ Error updating subscription from payment: {str(e)}")
         logger.error(f"❌ Error type: {type(e).__name__}")
@@ -565,6 +595,7 @@ def update_subscription_from_payment(checkout_session, db: Session):
         if db:
             db.rollback()
         raise
+    
 
 # ✅ 6. TEST ENDPOINT
 @router.get("/test")
