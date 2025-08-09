@@ -10,6 +10,12 @@ class BillingCycle(enum.Enum):
     monthly = "monthly"
     yearly = "yearly"
 
+class CancellationReason(enum.Enum):
+    user_request = "user_request"
+    payment_failed = "payment_failed"
+    admin_action = "admin_action"
+    other = "other"
+
 class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
 
@@ -48,10 +54,20 @@ class UserSubscription(Base):
 
     active = Column(Boolean, default=True)
     
-    # ✅ NEW: Auto-renewal preferences
+    # Auto-renewal preferences
     auto_renew = Column(Boolean, default=True)
+
+    # ✅ NEW: Cancellation fields
+    is_cancelled = Column(Boolean, default=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(Enum(CancellationReason, name="cancellationreason", create_type=False), nullable=True)
+    cancellation_note = Column(Text, nullable=True)
+    cancelled_by_user_id = Column(Integer, nullable=True)  # Who cancelled it
+
+        # ✅ Access period tracking
+    access_ends_at = Column(DateTime, nullable=True)  # When user loses access (same as expiry for cancelled subs)
     
-    # ✅ NEW: Payment tracking for one-time payments
+    # Payment tracking for one-time payments
     last_payment_date = Column(DateTime, nullable=True)
     last_payment_intent_id = Column(String, nullable=True)  # Stripe PaymentIntent ID
     payment_method_id = Column(String, nullable=True)  # Stored payment method
@@ -90,6 +106,37 @@ class PaymentHistory(Base):
     # Metadata
     is_renewal = Column(Boolean, default=False)
     meta_info = Column(Text, nullable=True)  # JSON string for additional data
+    
+    # Relationships
+    user = relationship("User")
+    subscription = relationship("UserSubscription")
+
+# ✅ NEW: Cancellation History Model
+class SubscriptionCancellation(Base):
+    __tablename__ = "subscription_cancellations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_id = Column(Integer, ForeignKey("user_subscriptions.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    cancelled_at = Column(DateTime, default=datetime.utcnow)
+    reason = Column(Enum(CancellationReason), nullable=False)
+    user_feedback = Column(Text, nullable=True)  # User's reason for cancelling
+    
+    # Subscription details at time of cancellation
+    plan_name = Column(String, nullable=False)
+    billing_cycle = Column(String, nullable=False)
+    remaining_days = Column(Integer, nullable=True)
+    access_until = Column(DateTime, nullable=False)
+    
+    # Financial details
+    prorated_refund_amount = Column(Integer, default=0)  # In cents
+    refund_processed = Column(Boolean, default=False)
+    refund_transaction_id = Column(String, nullable=True)
+    
+    # Metadata
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
     
     # Relationships
     user = relationship("User")

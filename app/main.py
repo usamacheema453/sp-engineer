@@ -62,6 +62,13 @@ try:
 except Exception as e:
     print(f"❌ Webhook Enhanced router error: {e}")
 
+try:
+    from app.routers.subscription_cancellation import router as cancellation_router
+    app.include_router(cancellation_router)
+    print("✅ Subscription Cancellation router registered successfully")
+except Exception as e:
+    print(f"❌ Subscription Cancellation router error: {e}")
+
 
 @app.get("/")
 async def root():

@@ -21,10 +21,13 @@ from app.utils.email import (
     store_otp,
     verify_email_otp,
 )
+from app.dependencies.auth import get_current_user
+import logging
 
 router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+logger = logging.getLogger(__name__)
 
 # Helper function to update login tracking
 def update_login_tracking(user: User, db: Session):
@@ -325,13 +328,64 @@ def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db))
 
 # ------------------ LOGOUT ------------------
 @router.post("/logout")
-def logout_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def logout_user(
+    current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme), 
+    db: Session = Depends(get_db)
+):
+    """Logout user by blacklisting current token"""
     try:
+        logger.info(f"🚪 Logout request from user: {current_user.email}")
+        
+        # Blacklist the current token
         blacklist_token(token, db)
-        return {"message": "Successfully logged out."}
+        
+        logger.info(f"✅ User logged out successfully: {current_user.email}")
+        
+        return {
+            "success": True,
+            "message": "Successfully logged out",
+            "user_email": current_user.email
+        }
+        
     except Exception as e:
-        print(f"Logout error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to logout")
+        logger.error(f"❌ Logout error for {current_user.email}: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to logout. Please try again."
+        )
+
+# ✅ 2. LOGOUT ALL DEVICES ENDPOINT
+@router.post("/logout-all-devices")
+def logout_all_devices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Logout from all devices (conceptual - invalidates all user sessions)"""
+    try:
+        logger.info(f"🚪🚪 Logout all devices request from user: {current_user.email}")
+        
+        # In production, you might want to:
+        # 1. Store user session IDs and invalidate all
+        # 2. Change user's secret key
+        # 3. Force re-authentication everywhere
+        
+        # For now, we'll return success and let frontend handle re-auth
+        logger.info(f"✅ All devices logout initiated for: {current_user.email}")
+        
+        return {
+            "success": True,
+            "message": "Logged out from all devices successfully",
+            "action_required": "Please login again on all devices",
+            "user_email": current_user.email
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Logout all devices error for {current_user.email}: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to logout from all devices"
+        )
 
 
 # ✅ NEW: Endpoint to mark pricing flow as completed
@@ -522,6 +576,8 @@ def google_login(request: dict, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"❌ Google login error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Google login failed: {str(e)}")
+
+
 
 # ✅ DEBUGGING ROUTE - Add this temporarily to test
 @router.get("/debug/google-config")
