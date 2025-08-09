@@ -54,7 +54,14 @@ def update_login_tracking(user: User, db: Session):
 def signup(user: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == user.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=400, detail="Email already exist")
+
+    # ✅ Validate terms acceptance
+    if not user.terms_accepted:
+        raise HTTPException(
+            status_code=400, 
+            detail="You must accept the terms and conditions to register"
+        )
 
     hashed_password = bcrypt.hash(user.password)
 
@@ -64,18 +71,18 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
         password=hashed_password,
         is_2fa_enabled=user.is_2fa_enabled,
         auth_method=user.auth_method,
-        phone_number=user.phone_number
+        phone_number=user.phone_number,
+        # ✅ NEW: Add terms acceptance fields
+        terms_accepted=user.terms_accepted,
+        terms_accepted_at=datetime.utcnow() if user.terms_accepted else None
     )
 
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
 
-    # ✅ ONLY send email verification during signup
+    # Send verification email
     send_verification_email(user.email)
-
-    # ❌ DO NOT send OTP here - it will be sent later via /send-2fa-otp endpoint
-    # Remove any OTP sending code from here
 
     return db_user
 
@@ -195,7 +202,7 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_verified:
         raise HTTPException(
             status_code=403, 
-            detail="Please verify your email before logging in. Check your inbox for the verification link."
+            detail="Please verify your email before logging in!"
         )
 
     # Handle 2FA - Send OTP and return 2FA info
@@ -443,7 +450,9 @@ def get_current_user_info(token: str = Depends(oauth2_scheme), db: Session = Dep
             phone_number=user.phone_number,
             # ✅ Add these new fields
             login_count=getattr(user, 'login_count', 0),
-            first_login_completed=getattr(user, 'first_login_completed', False)
+            first_login_completed=getattr(user, 'first_login_completed', False),
+            terms_accepted=getattr(user, 'terms_accepted', False),
+            terms_accepted_at=user.terms_accepted_at.isoformat() if getattr(user, 'terms_accepted_at', None) else None
         )
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -456,12 +465,18 @@ def google_signup(request: dict, db: Session = Depends(get_db)):
         email = request.get('email')
         full_name = request.get('full_name')
         platform = request.get('platform', 'unknown')
+        terms_accepted = request.get('terms_accepted', False)
         
         # ✅ ENHANCED validation
         if not email:
             raise HTTPException(status_code=400, detail="Email is required")
         if not full_name:
             raise HTTPException(status_code=400, detail="Full name is required")
+        if not terms_accepted:
+            raise HTTPException(
+                status_code=400, 
+                detail="You must accept the terms and conditions to register"
+            )
         
         print(f"🌐 Google signup attempt: {email} from {platform}")
         
@@ -483,7 +498,10 @@ def google_signup(request: dict, db: Session = Depends(get_db)):
             # ✅ REMOVED: signup_platform (field doesn't exist in model)
             created_at=datetime.utcnow(),
             login_count=0,
-            first_login_completed=False
+            first_login_completed=False,
+            # ✅ NEW: Add terms acceptance
+            terms_accepted=terms_accepted,
+            terms_accepted_at=datetime.utcnow() if terms_accepted else None
         )
         
         db.add(new_user)

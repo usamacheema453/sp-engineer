@@ -36,7 +36,7 @@ except Exception as e:
 
 try:
     from app.routers.auth import router as auth_router
-    app.include_router(auth_router, prefix="/auth")
+    app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
     print("✅ Auth router registered successfully")
 except Exception as e:
     print(f"❌ Auth router error: {e}")

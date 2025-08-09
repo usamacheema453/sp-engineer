@@ -39,3 +39,5 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
     settings = relationship("UserSettings", back_populates="user", uselist=False)
     firebase_uid = Column(String, nullable=True, unique=True) 
+    terms_accepted = Column(Boolean, default=False, nullable=False)
+    terms_accepted_at = Column(DateTime, nullable=True) 

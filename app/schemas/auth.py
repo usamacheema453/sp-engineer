@@ -23,6 +23,8 @@ class UserInfo(BaseModel):
     # ✅ NEW: First-time login tracking fields
     login_count: Optional[int] = 0
     first_login_completed: Optional[bool] = False
+    terms_accepted: Optional[bool] = False
+    terms_accepted_at: Optional[str] = None  # ISO format datetime
 
     class Config:
         from_attributes = True
